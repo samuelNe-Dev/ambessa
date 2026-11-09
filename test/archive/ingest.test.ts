@@ -237,3 +237,54 @@ describe("ambessa ingest", () => {
     expect(result.err).toMatch(/^ambessa: .*state\.json is unreadable\. Delete it to rebuild it/);
   });
 });
+
+describe("ambessa sessions", () => {
+  it("lists archived sessions newest first, with a summary and adapter drift", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    place("errors.jsonl", "p/sess-errors.jsonl");
+    place("subagent.jsonl", "p/sess-errors/subagents/agent-abc.jsonl");
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+
+    const result = await invoke(["sessions"], { AMBESSA_HOME: root });
+    expect(result).toMatchObject({ code: 0, err: "" });
+    const lines = result.out.split("\n");
+    expect(lines[0]).toMatch(/^Started +Turns +Tools +Errors +Unknown +Tokens in +Out +Subagents$/);
+    expect(lines[1]).toMatch(/^2026-11-02 09:00 +1 +9 +6 +22% /);
+    expect(lines[2]).toMatch(/^2026-11-01 10:00 +2 +1 +0 +0% /);
+    expect(result.out).toContain("2 sessions (+1 subagent) · 3 turns · 11 tool calls");
+    expect(result.out).toContain("Unrecognized entry types (the adapter may need an update): some-future-type 2");
+  });
+
+  it("limits the list", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    place("errors.jsonl", "p/sess-errors.jsonl");
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+    const result = await invoke(["sessions", "--limit", "1"], { AMBESSA_HOME: root });
+    expect(result.out).toContain("Showing the 1 newest of 2 sessions.");
+  });
+
+  it("rejects a limit that isn't a positive whole number", async () => {
+    const result = await invoke(["sessions", "--limit", "zero"], { AMBESSA_HOME: root });
+    expect(result.code).toBe(2);
+    expect(result.err).toContain("--limit must be a positive whole number");
+  });
+
+  it("points to ingest when the archive is empty", async () => {
+    const result = await invoke(["sessions"], { AMBESSA_HOME: root });
+    expect(result).toMatchObject({ code: 0 });
+    expect(result.out).toContain("No sessions in the archive yet. Run `ambessa ingest` first.");
+  });
+});
+
+describe("ambessa sessions: damaged archive", () => {
+  it("lists what it can and names the archived sessions it couldn't read", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+    writeFileSync(join(root, "sessions/claude-code/badbadbad.jsonl"), "{truncated");
+
+    const result = await invoke(["sessions"], { AMBESSA_HOME: root });
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("1 session (+0 subagents)");
+    expect(result.out).toContain("1 archived session couldn't be read: badbadbad");
+  });
+});

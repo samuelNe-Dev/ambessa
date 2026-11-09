@@ -2,7 +2,7 @@
 
 **Ambessa is a self-improving software factory for coding agents: it builds your issues into proven PRs, measures every session, and keeps only the changes to itself that measurably help.**
 
-> **Status: day 1.** Nothing runs yet. This repo is built in public, one small step a day. Follow along in [`LOG.md`](LOG.md).
+> **Status: v0.0.1.** Ambessa can read your Claude Code sessions into a private local archive and summarize them. The improvement loop comes next. This repo is built in public, one small step a day. Follow along in [`LOG.md`](LOG.md).
 
 ## Why
 
@@ -14,6 +14,25 @@ Coding agents repeat the same mistakes. They retry the same failing command, wri
 4. **Keep or revert.** Fixes that don't help get reverted. Your setup only keeps changes that have evidence behind them.
 
 On top of that loop runs a **factory**. It picks the next issue, builds it in an isolated worktree, proves the change with tests or before/after evidence, and hands you a PR. Factory jobs are sessions too, so the loop measures and improves the factory as well.
+
+## Try it
+
+Needs Node 22.12 or newer.
+
+```sh
+npx ambessa ingest     # read your Claude Code sessions into ~/.ambessa
+npx ambessa sessions   # list them, newest first
+```
+
+```text
+Started           Turns  Tools  Errors  Unknown  Tokens in   Out  Subagents
+2026-11-09 14:13      3    141       2      10%        31M  269k          1
+2026-11-08 19:57     50    320       5       7%       119M  332k          1
+…
+232 sessions (+213 subagents) · 2,374 turns · 35,646 tool calls: 3% errors, 12% unknown outcome
+```
+
+Times are local. The archive holds structure and numbers only: no prompts, code, file paths or account ids. Set `AMBESSA_HOME` to keep it somewhere else.
 
 ## Principles
 
