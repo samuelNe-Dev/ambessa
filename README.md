@@ -24,6 +24,7 @@ git clone https://github.com/samuelNe-Dev/ambessa && cd ambessa
 npm ci && npm run build
 node dist/bin.js ingest     # read your Claude Code sessions into ~/.ambessa
 node dist/bin.js sessions   # list them, newest first
+node dist/bin.js signals    # friction this week against last week
 ```
 
 ```text

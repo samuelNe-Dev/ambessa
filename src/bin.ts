@@ -7,4 +7,5 @@ process.exitCode = await run(process.argv.slice(2), {
   err: (line) => console.error(line),
   env: process.env,
   home: homedir(),
+  now: () => new Date(),
 });

@@ -6,7 +6,8 @@
  * adapters redact while reading, so private content never reaches the archive.
  */
 
-export const SCHEMA_VERSION = 1;
+/** 2 added tool-call signal tags and the session's rules version (decision record 0003). Version 1 records stay readable. */
+export const SCHEMA_VERSION = 2;
 
 export type Harness = "claude-code" | "codex";
 
@@ -35,6 +36,8 @@ export interface SessionRecord {
   unknownEntryTypes: Record<string, number>;
   /** Lines that weren't valid JSON. */
   unparseableLines: number;
+  /** Version of the adapter's text rules that tagged this session's events; 0 for records written before tagging existed. */
+  rulesVersion: number;
 }
 
 export type TurnOrigin = "human" | "automated";
@@ -82,6 +85,9 @@ export type ErrorKind =
   | "rate_limited"
   | "other";
 
+/** Signals that only a tool's error text reveals. Tagged at ingest; the text itself is never stored. */
+export type TextSignal = "read-before-write" | "stale-file" | "file-not-found";
+
 export interface ToolCallEvent {
   kind: "tool_call";
   /** Hashed tool-call id; links a subagent to the call that spawned it. */
@@ -93,6 +99,7 @@ export interface ToolCallEvent {
   outcome: ToolOutcome;
   /** Set only when outcome is "error". */
   errorKind: ErrorKind | null;
+  signals: TextSignal[];
   at: string | null;
   line: number;
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeClaudeCode } from "../../src/adapters/claude-code.js";
+import { CLAUDE_CODE_RULES_VERSION, normalizeClaudeCode } from "../../src/adapters/claude-code.js";
 import { hashId } from "../../src/session/ids.js";
 import type { ModelCallEvent, NormalizedSession, SessionEvent, ToolCallEvent } from "../../src/session/schema.js";
 
@@ -20,7 +20,7 @@ describe("Claude Code adapter: a basic session", () => {
   it("describes the session without storing raw ids", async () => {
     const { session } = await load("basic.jsonl");
     expect(session).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "session",
       id: hashId("claude-code", "session", "sess-basic"),
       harness: "claude-code",
@@ -34,6 +34,7 @@ describe("Claude Code adapter: a basic session", () => {
       source: { file: "basic.jsonl" },
       unknownEntryTypes: { "some-future-type": 2 },
       unparseableLines: 1,
+      rulesVersion: CLAUDE_CODE_RULES_VERSION,
     });
   });
 
@@ -86,6 +87,7 @@ describe("Claude Code adapter: a basic session", () => {
       category: "shell",
       outcome: "ok",
       errorKind: null,
+      signals: [],
       at: "2026-11-01T10:00:03.000Z",
       line: 5,
     });
@@ -126,12 +128,80 @@ describe("Claude Code adapter: errors and interruptions", () => {
   it("records interruptions, API errors and compaction without starting new turns", async () => {
     const { events } = await load("errors.jsonl");
     expect(ofKind(events, "turn")).toHaveLength(1);
-    expect(ofKind(events, "interruption")).toMatchObject([{ turn: 0, line: 19 }]);
+    // "[Request interrupted by user for tool use]" follows a tool call that already records the interruption.
+    expect(ofKind(events, "interruption")).toEqual([]);
     expect(ofKind(events, "api_error")).toMatchObject([
       { errorKind: "api_error", final: false, line: 20 },
       { errorKind: "rate_limited", final: true, line: 21 },
     ]);
     expect(ofKind(events, "compaction")).toMatchObject([{ turn: 0, line: 22 }]);
+  });
+});
+
+describe("Claude Code adapter: text-tagged signals", () => {
+  const T = "2026-11-06T10:00:00.000Z";
+  const lines = (calls: [string, string, object][]) => [
+    JSON.stringify({ type: "user", sessionId: "s", timestamp: T, message: { role: "user", content: "go" } }),
+    JSON.stringify({
+      type: "assistant",
+      sessionId: "s",
+      timestamp: T,
+      message: { id: "m", model: "m", content: calls.map(([id, name]) => ({ type: "tool_use", id, name, input: {} })) },
+    }),
+    ...calls.map(([id, , result]) =>
+      JSON.stringify({ type: "user", sessionId: "s", timestamp: T, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, ...result }] } }),
+    ),
+  ];
+  const signalsOf = async (calls: [string, string, object][]) =>
+    ofKind((await normalizeClaudeCode({ file: "s.jsonl", lines: lines(calls) })).events, "tool_call").map((call) => call.signals);
+
+  it("tags a write to a file the agent hadn't read", async () => {
+    expect(await signalsOf([["a", "Write", { is_error: true, content: "<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>" }]])).toEqual([
+      ["read-before-write"],
+    ]);
+  });
+
+  it("tags an edit to a file that changed since it was read", async () => {
+    const content = "<tool_use_error>File has been modified since read, either by the user or by a linter. Read it again before attempting to write it.</tool_use_error>";
+    expect(await signalsOf([["a", "Edit", { is_error: true, content }]])).toEqual([["stale-file"]]);
+  });
+
+  it("tags a read of a file that doesn't exist", async () => {
+    const content = "File does not exist. Note: your current working directory is /somewhere.";
+    expect(await signalsOf([["a", "Read", { is_error: true, content }]])).toEqual([["file-not-found"]]);
+  });
+
+  it("tags nothing when the call succeeded or the text belongs to another tool category", async () => {
+    expect(
+      await signalsOf([
+        ["a", "Bash", { is_error: false, content: "echo File has not been read yet" }],
+        ["b", "Bash", { is_error: true, content: "Exit code 1\nFile does not exist" }],
+        ["c", "Read", { is_error: false, content: "File does not exist in this list" }],
+      ]),
+    ).toEqual([[], [], []]);
+  });
+
+  it("doesn't tag text that a failed edit merely quotes back", async () => {
+    const content = "<tool_use_error>String to replace not found in file.\nString: expect(x).toBe('File has not been read yet')</tool_use_error>";
+    expect(await signalsOf([["a", "Edit", { is_error: true, content }]])).toEqual([[]]);
+  });
+
+  it("tags the errors fixture's write-before-read", async () => {
+    const calls = ofKind((await load("errors.jsonl")).events, "tool_call");
+    expect(calls[1]).toMatchObject({ tool: "Write", signals: ["read-before-write"] });
+  });
+});
+
+describe("Claude Code adapter: interruptions", () => {
+  it("records the user stopping a reply, but not the follow-up to a stopped tool", async () => {
+    const T = "2026-11-06T10:00:00.000Z";
+    const text = (content: string) => JSON.stringify({ type: "user", sessionId: "s", timestamp: T, message: { role: "user", content: [{ type: "text", text: content }] } });
+    const { events } = await normalizeClaudeCode({
+      file: "s.jsonl",
+      lines: [text("go"), text("[Request interrupted by user]"), text("[Request interrupted by user for tool use]")],
+    });
+    expect(ofKind(events, "interruption")).toMatchObject([{ line: 2 }]);
+    expect(ofKind(events, "turn")).toHaveLength(1);
   });
 });
 

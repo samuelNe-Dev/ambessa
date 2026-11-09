@@ -8,6 +8,7 @@ import {
   type SessionEvent,
   type ToolCallEvent,
   type ToolCategory,
+  type TextSignal,
   type ToolOutcome,
   type TurnOrigin,
   type Usage,
@@ -29,6 +30,21 @@ export interface ClaudeCodeInput {
 }
 
 const HARNESS = "claude-code";
+
+/**
+ * Bump whenever the adapter reads text differently (TEXT_RULES, interruption messages), so the next
+ * ingest re-reads every transcript still on disk. 2: rules anchored to the start of the error;
+ * the "…for tool use" interruption follow-up is no longer a separate interruption.
+ */
+export const CLAUDE_CODE_RULES_VERSION = 2;
+
+/** Claude Code's own wording for errors that only text reveals. Each rule applies to failed calls of one category. */
+const TEXT_RULES: { signal: TextSignal; category: ToolCategory; pattern: RegExp }[] = [
+  // Anchored to the start, so an error that merely quotes these words (e.g. a failed edit echoing code) isn't tagged.
+  { signal: "read-before-write", category: "write", pattern: /^\s*(<tool_use_error>)?File has not been read yet/i },
+  { signal: "stale-file", category: "write", pattern: /^\s*(<tool_use_error>)?File has been modified since (it was )?read/i },
+  { signal: "file-not-found", category: "read", pattern: /^\s*(<tool_use_error>)?File does not exist/i },
+];
 
 /** Entry types the adapter understands but doesn't need: bookkeeping, titles, account and cost snapshots. */
 const IGNORED_TYPES = new Set([
@@ -57,6 +73,8 @@ const IGNORED_TYPES = new Set([
 const AUTOMATED_TURN_ORIGINS = new Set(["task_notification", "scheduled", "peer"]);
 const PERMISSION_DENIALS = new Set(["permission-rule", "automode-blocked", "automode-unavailable"]);
 const INTERRUPTION_PREFIX = "[Request interrupted by user";
+/** Written after the user stops or rejects a tool call, which the call's own result already records. */
+const TOOL_INTERRUPTION_PREFIX = "[Request interrupted by user for tool use";
 /** User entries that aren't prompts: slash-command output and the user's own `!` shell commands. */
 const NON_PROMPT_TAGS = ["<local-command-", "<bash-input", "<bash-stdout", "<bash-stderr"];
 const SUBAGENT_FILE = /^agent-(.+)\.jsonl$/;
@@ -119,12 +137,13 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
             const { outcome, errorKind } = classifyResult(block, entry);
             call.outcome = outcome;
             call.errorKind = errorKind;
+            if (outcome === "error") call.signals = textSignals(call.category, messageText(block.content));
           }
           break;
         }
         const text = messageText(message.content);
         if (text.startsWith(INTERRUPTION_PREFIX)) {
-          events.push({ kind: "interruption", turn, at, line: lineNumber });
+          if (!text.startsWith(TOOL_INTERRUPTION_PREFIX)) events.push({ kind: "interruption", turn, at, line: lineNumber });
           break;
         }
         if (NON_PROMPT_TAGS.some((tag) => text.trimStart().startsWith(tag))) break;
@@ -170,6 +189,7 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
             category: categorize(tool),
             outcome: "unknown",
             errorKind: null,
+            signals: [],
             at,
             line: lineNumber,
           };
@@ -239,9 +259,14 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
       source: { file: input.file },
       unknownEntryTypes,
       unparseableLines,
+      rulesVersion: CLAUDE_CODE_RULES_VERSION,
     },
     events,
   };
+}
+
+function textSignals(category: ToolCategory, text: string): TextSignal[] {
+  return TEXT_RULES.filter((rule) => rule.category === category && rule.pattern.test(text)).map((rule) => rule.signal);
 }
 
 function classifyResult(block: Entry, entry: Entry): { outcome: ToolOutcome; errorKind: ErrorKind | null } {

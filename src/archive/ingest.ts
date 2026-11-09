@@ -2,7 +2,7 @@ import { createReadStream, type Stats } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { normalizeClaudeCode } from "../adapters/claude-code.js";
+import { CLAUDE_CODE_RULES_VERSION, normalizeClaudeCode } from "../adapters/claude-code.js";
 import type { NormalizedSession } from "../session/schema.js";
 import {
   acquireLock,
@@ -60,7 +60,8 @@ export async function ingestClaudeCode(root: string, source: string): Promise<In
           known !== undefined &&
           known.size === transcriptStats.size &&
           known.mtimeMs === transcriptStats.mtimeMs &&
-          known.metaMtimeMs === (metaStats?.mtimeMs ?? null)
+          known.metaMtimeMs === (metaStats?.mtimeMs ?? null) &&
+          known.rulesVersion === CLAUDE_CODE_RULES_VERSION
         ) {
           result.unchanged += 1;
           continue;
@@ -100,6 +101,7 @@ function remember(state: ArchiveState, file: string, transcript: Stats, meta: St
     metaMtimeMs: meta?.mtimeMs ?? null,
     harness: session.harness,
     sessionId: session.id,
+    rulesVersion: session.rulesVersion,
   };
 
   for (const event of events) {

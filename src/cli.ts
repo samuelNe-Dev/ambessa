@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { archiveRoot, readAllSessions } from "./archive/archive.js";
 import { defaultClaudeCodeSource, ingestClaudeCode } from "./archive/ingest.js";
+import { CLAUDE_CODE_RULES_VERSION } from "./adapters/claude-code.js";
 import { renderSessions, summarize } from "./report/sessions.js";
+import { compareWeeks, renderSignals } from "./signals/signals.js";
 
 /** Everything the CLI touches outside itself. Injected so tests never use the real terminal, home or environment. */
 export interface Context {
@@ -10,6 +12,7 @@ export interface Context {
   err(line: string): void;
   env: Readonly<Record<string, string | undefined>>;
   home: string;
+  now(): Date;
 }
 
 const USAGE = `Usage: ambessa <command> [options]
@@ -19,6 +22,7 @@ Commands:
                --source <dir>   Transcript folder (default: ~/.claude/projects)
   sessions   List archived sessions, newest first, with subagents rolled up
                --limit <n>      How many to show (default: 20)
+  signals    Friction signals for the last 7 days against the 7 before
   help       Show this message
   version    Print the installed version
 
@@ -56,6 +60,8 @@ async function dispatch(args: readonly string[], context: Context): Promise<numb
       return ingest(rest, context);
     case "sessions":
       return sessions(rest, context);
+    case "signals":
+      return signals(rest, context);
     default:
       context.err(`Unknown command: ${command}\n\n${USAGE}`);
       return 2;
@@ -119,6 +125,19 @@ async function sessions(args: readonly string[], context: Context): Promise<numb
 
   const { sessions, unreadable } = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
   context.out(renderSessions(summarize(sessions), limit, unreadable));
+  return 0;
+}
+
+async function signals(args: readonly string[], context: Context): Promise<number> {
+  try {
+    parseArgs({ args: [...args], options: {}, strict: true });
+  } catch (error) {
+    context.err(`${(error as Error).message}\n\n${USAGE}`);
+    return 2;
+  }
+  const { sessions: archived, unreadable } = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
+  context.out(renderSignals(compareWeeks(archived, context.now(), CLAUDE_CODE_RULES_VERSION)));
+  if (unreadable.length > 0) context.out(`${unreadable.length} archived session(s) couldn't be read and are left out.`);
   return 0;
 }
 

@@ -23,10 +23,15 @@ export interface SourceState {
   metaMtimeMs: number | null;
   harness: Harness;
   sessionId: string;
+  /** The text rules the session was tagged with; a different current version means re-tag. */
+  rulesVersion?: number;
 }
 
+/** The state file has its own version, separate from the session schema. */
+const STATE_VERSION = 1;
+
 export interface ArchiveState {
-  schemaVersion: typeof SCHEMA_VERSION;
+  schemaVersion: typeof STATE_VERSION;
   sources: Record<string, SourceState>;
   /** Which session made each agent tool call, so nested subagents can be linked without rereading the archive. */
   spawners: Record<string, { sessionId: string; startedAt: string | null }>;
@@ -44,7 +49,7 @@ export async function loadState(root: string): Promise<ArchiveState> {
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: SCHEMA_VERSION, sources: {}, spawners: {}, unlinked: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: STATE_VERSION, sources: {}, spawners: {}, unlinked: [] };
     throw error;
   }
   const rebuild = "Delete it to rebuild it on the next ingest; archived sessions are kept.";
@@ -54,7 +59,7 @@ export async function loadState(root: string): Promise<ArchiveState> {
   } catch {
     throw new Error(`${path} is unreadable. ${rebuild}`);
   }
-  if (state.schemaVersion !== SCHEMA_VERSION) throw new Error(`${path} has unsupported version ${state.schemaVersion}. ${rebuild}`);
+  if (state.schemaVersion !== STATE_VERSION) throw new Error(`${path} has unsupported version ${state.schemaVersion}. ${rebuild}`);
   return state;
 }
 
@@ -104,13 +109,12 @@ export async function readSession(root: string, harness: Harness, id: string): P
   const lines = createInterface({ input: createReadStream(sessionPath(root, harness, id)), crlfDelay: Infinity });
   for await (const line of lines) {
     if (line.length === 0) continue;
-    const record = JSON.parse(line) as { schemaVersion: number; kind: string };
-    if (record.schemaVersion !== SCHEMA_VERSION) throw new Error(`Unsupported schema version ${record.schemaVersion} in session ${id}`);
+    const record = upgrade(JSON.parse(line) as ArchivedRecord, id);
     if (record.kind === "session") {
-      session = record as SessionRecord;
+      session = record as unknown as SessionRecord;
     } else {
       const { schemaVersion: _version, ...event } = record;
-      events.push(event as SessionEvent);
+      events.push(event as unknown as SessionEvent);
     }
   }
   if (session === null) throw new Error(`Archived session ${id} has no session record`);
@@ -126,9 +130,9 @@ export async function readSessionRecord(root: string, harness: Harness, id: stri
   const lines = createInterface({ input: createReadStream(sessionPath(root, harness, id)), crlfDelay: Infinity });
   try {
     for await (const line of lines) {
-      const record = JSON.parse(line) as SessionRecord;
-      if (record.schemaVersion !== SCHEMA_VERSION || record.kind !== "session") break;
-      return record;
+      const record = upgrade(JSON.parse(line) as ArchivedRecord, id);
+      if (record.kind !== "session") break;
+      return record as unknown as SessionRecord;
     }
   } finally {
     lines.close();
@@ -162,6 +166,20 @@ export async function listSessionIds(root: string, harness: Harness): Promise<st
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/**
+ * Brings an archived record up to the current schema. Version 1 predates signal tags
+ * (decision record 0003): its sessions read as rules version 0 and its tool calls as untagged.
+ */
+type ArchivedRecord = { schemaVersion: number; kind: string } & Record<string, unknown>;
+
+function upgrade(record: ArchivedRecord, id: string): ArchivedRecord {
+  if (record.schemaVersion === SCHEMA_VERSION) return record;
+  if (record.schemaVersion !== 1) throw new Error(`Unsupported schema version ${record.schemaVersion} in session ${id}`);
+  if (record.kind === "session") return { rulesVersion: 0, ...record, schemaVersion: SCHEMA_VERSION };
+  if (record.kind === "tool_call") return { signals: [], ...record, schemaVersion: SCHEMA_VERSION };
+  return { ...record, schemaVersion: SCHEMA_VERSION };
 }
 
 function sessionPath(root: string, harness: Harness, id: string): string {
