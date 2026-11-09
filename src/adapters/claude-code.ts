@@ -24,7 +24,7 @@ export interface ClaudeCodeInput {
   /** Path of the transcript; becomes the local drill-down pointer. */
   file: string;
   lines: Iterable<string> | AsyncIterable<string>;
-  /** Parsed contents of a subagent's `agent-<id>.json` meta file, when there is one. */
+  /** Parsed contents of a subagent's `agent-<id>.meta.json` file, when there is one. */
   meta?: unknown;
 }
 

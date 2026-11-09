@@ -26,6 +26,15 @@ Ambessa is in early development. Roadmap: https://github.com/samuelNe-Dev/ambess
 
 /** Runs one CLI invocation and returns the process exit code. */
 export async function run(args: readonly string[], context: Context): Promise<number> {
+  try {
+    return await dispatch(args, context);
+  } catch (error) {
+    context.err(`ambessa: ${(error as Error).message}`);
+    return 1;
+  }
+}
+
+async function dispatch(args: readonly string[], context: Context): Promise<number> {
   const [command, ...rest] = args;
 
   switch (command) {
@@ -49,34 +58,42 @@ export async function run(args: readonly string[], context: Context): Promise<nu
 }
 
 async function ingest(args: readonly string[], context: Context): Promise<number> {
-  let source: string;
+  let explicitSource: string | undefined;
   try {
     const { values } = parseArgs({ args: [...args], options: { source: { type: "string" } }, strict: true });
-    source = values.source ?? defaultClaudeCodeSource(context.env, context.home);
+    explicitSource = values.source;
   } catch (error) {
     context.err(`${(error as Error).message}\n\n${USAGE}`);
     return 2;
   }
 
+  const source = explicitSource ?? defaultClaudeCodeSource(context.env, context.home);
   const root = archiveRoot(context.env, context.home);
   const result = await ingestClaudeCode(root, source);
-  const total = result.added + result.updated + result.unchanged + result.failed;
-  if (total === 0) {
+  if (!result.sourceFound) {
+    // A folder the user named must exist; the default one simply means Claude Code hasn't run here.
+    if (explicitSource !== undefined) {
+      context.err(`Source folder not found: ${source}`);
+      return 1;
+    }
     context.out(`No Claude Code sessions found in ${source}.`);
     return 0;
   }
 
+  const failed = result.failures.length;
   context.out(
     `Claude Code: ${result.added} new, ${result.updated} updated, ${result.unchanged} unchanged` +
-      (result.failed > 0 ? `, ${result.failed} failed` : "") +
+      (failed > 0 ? `, ${failed} failed` : "") +
       ".",
   );
   if (result.linked + result.orphaned > 0) {
-    context.out(`Nested subagents: ${result.linked} linked to their parent, ${result.orphaned} without one.`);
+    context.out(`Nested subagents: ${result.linked} linked to their parent, ${result.orphaned} without one yet.`);
   }
   context.out(`Archive: ${root}`);
-  if (result.failed > 0) {
-    context.err(`${result.failed} transcript(s) couldn't be read. They'll be retried on the next run.`);
+  if (failed > 0) {
+    const shown = result.failures.slice(0, 5).map(({ file, reason }) => `  ${file}: ${reason}`);
+    const more = failed > shown.length ? [`  …and ${failed - shown.length} more`] : [];
+    context.err([`${failed} transcript(s) couldn't be ingested and will be retried next run:`, ...shown, ...more].join("\n"));
     return 1;
   }
   return 0;

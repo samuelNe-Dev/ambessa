@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { SCHEMA_VERSION, type Harness, type NormalizedSession, type SessionEvent, type SessionRecord } from "../session/schema.js";
@@ -10,6 +10,7 @@ import { SCHEMA_VERSION, type Harness, type NormalizedSession, type SessionEvent
  * Layout:
  *   <root>/sessions/<harness>/<session id>.jsonl   first line: the session record; then one event per line
  *   <root>/state.json                              which transcripts were ingested, to skip unchanged ones
+ *   <root>/ingest.lock                             present while an ingest runs; holds its process id
  *
  * Harnesses delete old transcripts; the archive keeps their normalized form so baselines survive.
  */
@@ -18,6 +19,8 @@ import { SCHEMA_VERSION, type Harness, type NormalizedSession, type SessionEvent
 export interface SourceState {
   size: number;
   mtimeMs: number;
+  /** A subagent's meta file can be written after its transcript, so it's part of the fingerprint. */
+  metaMtimeMs: number | null;
   harness: Harness;
   sessionId: string;
 }
@@ -25,6 +28,10 @@ export interface SourceState {
 export interface ArchiveState {
   schemaVersion: typeof SCHEMA_VERSION;
   sources: Record<string, SourceState>;
+  /** Which session made each agent tool call, so nested subagents can be linked without rereading the archive. */
+  spawners: Record<string, { sessionId: string; startedAt: string | null }>;
+  /** Nested subagents still waiting for their parent. */
+  unlinked: string[];
 }
 
 export function archiveRoot(env: Readonly<Record<string, string | undefined>>, home: string): string {
@@ -32,13 +39,53 @@ export function archiveRoot(env: Readonly<Record<string, string | undefined>>, h
 }
 
 export async function loadState(root: string): Promise<ArchiveState> {
+  const path = join(root, "state.json");
+  let text: string;
   try {
-    const state = JSON.parse(await readFile(join(root, "state.json"), "utf8")) as ArchiveState;
-    if (state.schemaVersion !== SCHEMA_VERSION) throw new Error(`Unsupported archive state version ${state.schemaVersion}`);
-    return state;
+    text = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: SCHEMA_VERSION, sources: {} };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: SCHEMA_VERSION, sources: {}, spawners: {}, unlinked: [] };
     throw error;
+  }
+  const rebuild = "Delete it to rebuild it on the next ingest; archived sessions are kept.";
+  let state: ArchiveState;
+  try {
+    state = JSON.parse(text) as ArchiveState;
+  } catch {
+    throw new Error(`${path} is unreadable. ${rebuild}`);
+  }
+  if (state.schemaVersion !== SCHEMA_VERSION) throw new Error(`${path} has unsupported version ${state.schemaVersion}. ${rebuild}`);
+  return state;
+}
+
+/**
+ * Makes sure only one ingest writes to the archive at a time. A lock left by a process that no
+ * longer runs (e.g. after a crash) is taken over. Returns the function that releases the lock.
+ */
+export async function acquireLock(root: string): Promise<() => Promise<void>> {
+  await mkdir(root, { recursive: true });
+  const path = join(root, "ingest.lock");
+  const take = () => writeFile(path, String(process.pid), { flag: "wx" });
+  try {
+    await take();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const holder = Number.parseInt(await readFile(path, "utf8").catch(() => ""), 10);
+    if (Number.isInteger(holder) && isRunning(holder)) {
+      throw new Error(`Another ingest is running (process ${holder}). If it isn't, delete ${path}.`);
+    }
+    await rm(path, { force: true });
+    await take();
+  }
+  return () => rm(path, { force: true });
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 
@@ -68,6 +115,10 @@ export async function readSession(root: string, harness: Harness, id: string): P
   }
   if (session === null) throw new Error(`Archived session ${id} has no session record`);
   return { session, events };
+}
+
+export async function deleteSession(root: string, harness: Harness, id: string): Promise<void> {
+  await rm(sessionPath(root, harness, id), { force: true });
 }
 
 /** Only the session record (the first line), without loading the events. */
