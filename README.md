@@ -21,7 +21,7 @@ On top of that loop runs a **factory**. It picks the next issue, builds it in an
 - **No model calls.** The CLI is deterministic: it counts, compares and schedules. Judgement, such as writing a proposal, runs inside the agent you already use, through plain markdown skills.
 - **Your data stays local.** Sessions, code and project names never leave your machine. Only aggregate numbers are shared, and only when you choose to.
 - **Evidence before claims.** Every self-change carries a baseline and a grade. Every factory PR carries proof.
-- **Zero runtime dependencies.** TypeScript on Node 20+, run with `npx ambessa`.
+- **Zero runtime dependencies.** TypeScript on Node 22.12+, run with `npx ambessa`.
 
 ## Roadmap
 

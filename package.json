@@ -2,7 +2,15 @@
   "name": "ambessa",
   "version": "0.0.0",
   "description": "A self-improving software factory for coding agents: builds issues into proven PRs, measures every session, and keeps only the changes to itself that measurably help.",
-  "keywords": ["ai", "agents", "coding-agents", "claude-code", "codex", "evaluation", "developer-tools"],
+  "keywords": [
+    "ai",
+    "agents",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "evaluation",
+    "developer-tools"
+  ],
   "homepage": "https://github.com/samuelNe-Dev/ambessa#readme",
   "repository": {
     "type": "git",
@@ -11,11 +19,28 @@
   "bugs": "https://github.com/samuelNe-Dev/ambessa/issues",
   "license": "MIT",
   "author": "Samuel Negash",
+  "type": "module",
+  "bin": {
+    "ambessa": "dist/bin.js"
+  },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "files": [
+    "dist",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepublishOnly": "npm run check"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
 }
