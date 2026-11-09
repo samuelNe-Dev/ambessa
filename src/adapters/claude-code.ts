@@ -57,6 +57,10 @@ const IGNORED_TYPES = new Set([
 const AUTOMATED_TURN_ORIGINS = new Set(["task_notification", "scheduled", "peer"]);
 const PERMISSION_DENIALS = new Set(["permission-rule", "automode-blocked", "automode-unavailable"]);
 const INTERRUPTION_PREFIX = "[Request interrupted by user";
+/** User entries that aren't prompts: slash-command output and the user's own `!` shell commands. */
+const NON_PROMPT_TAGS = ["<local-command-", "<bash-input", "<bash-stdout", "<bash-stderr"];
+const SUBAGENT_FILE = /^agent-(.+)\.jsonl$/;
+const ENTRY_TYPE = /^[a-z0-9_-]{1,40}$/i;
 
 type Entry = Record<string, unknown>;
 
@@ -67,10 +71,16 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
   const unknownEntryTypes: Record<string, number> = {};
   let unparseableLines = 0;
   let sessionId: string | null = null;
-  let agentId: string | null = null;
   let harnessVersion: string | null = null;
   let startedAt: string | null = null;
   let endedAt: string | null = null;
+  let startedMs = Infinity;
+  let endedMs = -Infinity;
+  // A subagent is known by an agentId on its entries, by its file name, or by having a meta file.
+  const meta = obj(input.meta);
+  const fileAgentId = SUBAGENT_FILE.exec(basename(input.file))?.[1] ?? null;
+  let agentId: string | null = null;
+  const isSubagent = () => agentId !== null || fileAgentId !== null || meta !== null;
   let turn: number | null = null;
   let lineNumber = 0;
 
@@ -89,9 +99,10 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
       harnessVersion = version;
     }
     const at = str(entry.timestamp);
-    if (at !== null) {
-      if (startedAt === null || at < startedAt) startedAt = at;
-      if (endedAt === null || at > endedAt) endedAt = at;
+    const ms = at === null ? NaN : Date.parse(at);
+    if (!Number.isNaN(ms)) {
+      if (ms < startedMs) [startedMs, startedAt] = [ms, at];
+      if (ms > endedMs) [endedMs, endedAt] = [ms, at];
     }
 
     const type = str(entry.type) ?? "(none)";
@@ -115,8 +126,9 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
           events.push({ kind: "interruption", turn, at, line: lineNumber });
           break;
         }
+        if (NON_PROMPT_TAGS.some((tag) => text.trimStart().startsWith(tag))) break;
         turn = turn === null ? 0 : turn + 1;
-        const origin = promptOrigin(entry, text, agentId !== null);
+        const origin = promptOrigin(entry, text, isSubagent());
         events.push({ kind: "turn", index: turn, origin, at, line: lineNumber });
         break;
       }
@@ -140,8 +152,9 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
           modelCalls.set(messageId, call);
           events.push(call);
         } else {
-          // One API response is written as several partial entries; the last one has the final usage.
-          known.usage = usage;
+          // One API response is written as several partial entries; later ones have the final counts.
+          // A copy that lacks a count must not erase one we already know.
+          known.usage = mergeUsage(known.usage, usage);
         }
 
         for (const block of blocks(message.content)) {
@@ -180,33 +193,46 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
         break;
 
       default:
-        if (!IGNORED_TYPES.has(type)) unknownEntryTypes[type] = (unknownEntryTypes[type] ?? 0) + 1;
+        if (!IGNORED_TYPES.has(type)) {
+          // Only harness-style names are kept as keys, so a malformed entry can't carry text into the output.
+          const key = ENTRY_TYPE.test(type) ? type : "(other)";
+          unknownEntryTypes[key] = (unknownEntryTypes[key] ?? 0) + 1;
+        }
     }
   }
 
-  const rawSessionId = sessionId ?? basename(input.file, ".jsonl");
-  const meta = obj(input.meta);
   const spawnDepth = num(meta?.spawnDepth);
   const spawnToolUseId = str(meta?.toolUseId);
-  const isSubagent = agentId !== null;
-  const depth = isSubagent ? (spawnDepth ?? 1) : 0;
+  const spawnedByCallId = spawnToolUseId === null ? null : hashId(HARNESS, "call", spawnToolUseId);
+  const subagentId = agentId ?? fileAgentId ?? str(meta?.agentId);
+  const rootId = sessionId === null ? null : hashId(HARNESS, "session", sessionId);
+
+  let id: string;
+  let parentId: string | null = null;
+  let depth = 0;
+  let orphan = false;
+  if (!isSubagent()) {
+    id = rootId ?? hashId(HARNESS, "session", basename(input.file, ".jsonl"));
+  } else {
+    depth = spawnDepth ?? 1;
+    // Subagent entries carry the root session's id, which is the parent only one level down.
+    // A deeper parent is resolved later by the archive, through the call that spawned this one.
+    if (depth === 1) parentId = rootId;
+    orphan = depth === 1 ? rootId === null : spawnedByCallId === null;
+    id = hashId(HARNESS, "session", sessionId ?? "(unknown)", subagentId ?? basename(input.file, ".jsonl"));
+  }
 
   return {
     session: {
       schemaVersion: SCHEMA_VERSION,
       kind: "session",
-      id:
-        agentId === null
-          ? hashId(HARNESS, "session", rawSessionId)
-          : hashId(HARNESS, "session", rawSessionId, agentId),
+      id,
       harness: HARNESS,
       harnessVersion,
-      // Subagent entries carry the root session's id. That's the parent only one level down;
-      // deeper parents are resolved by the archive through `spawnedByCallId`.
-      parentId: isSubagent && depth === 1 ? hashId(HARNESS, "session", rawSessionId) : null,
+      parentId,
       depth,
-      orphan: false,
-      spawnedByCallId: spawnToolUseId === null ? null : hashId(HARNESS, "call", spawnToolUseId),
+      orphan,
+      spawnedByCallId,
       startedAt,
       endedAt,
       source: { file: input.file },
@@ -220,9 +246,13 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
 function classifyResult(block: Entry, entry: Entry): { outcome: ToolOutcome; errorKind: ErrorKind | null } {
   const error = (errorKind: ErrorKind) => ({ outcome: "error" as const, errorKind });
 
+  // An explicit "it worked" wins: denial and interruption fields sit on the whole entry,
+  // not on one result, so they can't override this result's own flag.
+  if (block.is_error === false) return { outcome: "ok", errorKind: null };
+
   const text = messageText(block.content);
   // Claude Code files hook blocks as permission-rule denials; only the text says a hook did it.
-  if (/^(PreToolUse|PostToolUse)\S* hook/.test(text)) return error("hook_blocked");
+  if (block.is_error === true && /^PreToolUse\S* hook/.test(text)) return error("hook_blocked");
 
   // Structured signals next: they don't depend on wording.
   const denial = str(entry.toolDenialKind);
@@ -233,7 +263,6 @@ function classifyResult(block: Entry, entry: Entry): { outcome: ToolOutcome; err
   if (structured?.interrupted === true) return error("interrupted");
 
   if (block.is_error === true) return error(/^Exit code \d+/.test(text) ? "nonzero_exit" : "other");
-  if (block.is_error === false) return { outcome: "ok", errorKind: null };
   // Claude Code sets the flag explicitly only for some tools; the rest omit it when they succeed
   // and return a structured result instead.
   if (structured !== null) return { outcome: "ok", errorKind: null };
@@ -246,9 +275,12 @@ function promptOrigin(entry: Entry, text: string, isSubagent: boolean): TurnOrig
   const origin = str(entry.turnOrigin);
   if (origin !== null && AUTOMATED_TURN_ORIGINS.has(origin)) return "automated";
   if (origin === "human") return "human";
+  const trimmed = text.trimStart();
+  // A slash command the user typed arrives wrapped as <command-name>/...</command-name>.
+  if (trimmed.startsWith("<command-")) return "human";
   // Older versions have no turnOrigin. Harness-injected prompts arrive wrapped in a tag,
   // e.g. <task-notification> or <scheduled-task>.
-  return text.trimStart().startsWith("<") ? "automated" : "human";
+  return trimmed.startsWith("<") ? "automated" : "human";
 }
 
 function categorize(tool: string): ToolCategory {
@@ -297,6 +329,16 @@ function toUsage(usage: Entry | null): Usage {
   };
 }
 
+function mergeUsage(known: Usage, next: Usage): Usage {
+  return {
+    inputUncached: next.inputUncached ?? known.inputUncached,
+    cacheRead: next.cacheRead ?? known.cacheRead,
+    cacheWrite: next.cacheWrite ?? known.cacheWrite,
+    output: next.output ?? known.output,
+    reasoning: next.reasoning ?? known.reasoning,
+  };
+}
+
 /** Plain text of a message or tool result, whether stored as a string or as content blocks. */
 function messageText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -317,6 +359,7 @@ function parseEntry(line: string): Entry | null {
   }
 }
 
+/** Compares dotted numeric versions. Non-numeric parts (e.g. "-beta") are ignored, which is enough to pick the newest. */
 function compareVersions(a: string, b: string): number {
   const left = a.split(".").map(Number);
   const right = b.split(".").map(Number);

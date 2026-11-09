@@ -168,6 +168,105 @@ describe("Claude Code adapter: privacy", () => {
   });
 });
 
+describe("Claude Code adapter: edge cases", () => {
+  const T = "2026-11-04T10:00:00.000Z";
+  const prompt = (content: unknown, extra: object = {}) =>
+    JSON.stringify({ type: "user", sessionId: "s", timestamp: T, message: { role: "user", content }, ...extra });
+  const assistant = (id: string, content: unknown[], usage?: object) =>
+    JSON.stringify({ type: "assistant", sessionId: "s", timestamp: T, message: { id, model: "m", content, usage } });
+  const result = (toolUseId: string, block: object, extra: object = {}) =>
+    JSON.stringify({
+      type: "user",
+      sessionId: "s",
+      timestamp: T,
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: toolUseId, ...block }] },
+      ...extra,
+    });
+  const run = (lines: string[], file = "s.jsonl", meta?: unknown) => normalizeClaudeCode({ file, lines, meta });
+  const bash = (id: string) => ({ type: "tool_use", id, name: "Bash", input: {} });
+
+  it("doesn't count slash-command output or the user's own shell commands as turns", async () => {
+    const { events } = await run([
+      prompt("fix it"),
+      prompt("<command-name>/cost</command-name>"),
+      prompt("<local-command-stdout>SECRET</local-command-stdout>"),
+      prompt("<local-command-caveat>SECRET</local-command-caveat>"),
+      prompt("<bash-input>ls</bash-input>"),
+      prompt("<bash-stdout>SECRET</bash-stdout><bash-stderr></bash-stderr>"),
+    ]);
+    expect(ofKind(events, "turn").map((turn) => turn.origin)).toEqual(["human", "human"]);
+  });
+
+  it("only calls it a hook block when the call actually failed", async () => {
+    const { events } = await run([
+      prompt("go"),
+      assistant("m1", [bash("a"), bash("b")]),
+      result("a", { is_error: false, content: "PostToolUse:Bash hook log line" }),
+      result("b", { is_error: true, content: "PreToolUse:Bash hook error: blocked" }, { toolDenialKind: "permission-rule" }),
+    ]);
+    expect(ofKind(events, "tool_call").map((call) => call.errorKind)).toEqual([null, "hook_blocked"]);
+  });
+
+  it("ignores a denial on an entry whose result says it succeeded", async () => {
+    const { events } = await run([
+      prompt("go"),
+      assistant("m1", [bash("a")]),
+      result("a", { is_error: false, content: "fine" }, { toolDenialKind: "permission-rule" }),
+    ]);
+    expect(ofKind(events, "tool_call")[0]).toMatchObject({ outcome: "ok", errorKind: null });
+  });
+
+  it("keeps known token counts when a later partial copy lacks them", async () => {
+    const { events } = await run([
+      prompt("go"),
+      assistant("m1", [], { input_tokens: 5, output_tokens: 50, cache_read_input_tokens: 9 }),
+      assistant("m1", [], { output_tokens: 60 }),
+      assistant("m1", []),
+    ]);
+    expect(ofKind(events, "model_call")[0]?.usage).toEqual({
+      inputUncached: 5,
+      cacheRead: 9,
+      cacheWrite: null,
+      output: 60,
+      reasoning: null,
+    });
+  });
+
+  it("orders timestamps by time, not by text", async () => {
+    const at = (timestamp: string) => JSON.stringify({ type: "user", sessionId: "s", timestamp, isMeta: true });
+    // 10:30+02:00 is 08:30 UTC: the earliest, though it sorts last as text.
+    const { session } = await run([at("2026-11-04T09:00:00.000Z"), at("2026-11-04T10:30:00+02:00"), at("2026-11-04T09:15:00Z")]);
+    expect(session).toMatchObject({ startedAt: "2026-11-04T10:30:00+02:00", endedAt: "2026-11-04T09:15:00Z" });
+  });
+
+  it("recognizes a subagent from its file name when no entry carries an agent id", async () => {
+    const { session } = await run([prompt("task")], "/x/s/subagents/agent-a1b2.jsonl");
+    expect(session).toMatchObject({
+      id: hashId("claude-code", "session", "s", "a1b2"),
+      parentId: hashId("claude-code", "session", "s"),
+      depth: 1,
+      orphan: false,
+    });
+  });
+
+  it("flags a subagent as an orphan when its parent can't be known", async () => {
+    const noSessionId = JSON.stringify({ type: "user", agentId: "a1", message: { role: "user", content: "task" } });
+    const { session } = await run([noSessionId], "/x/agent-a1.jsonl");
+    expect(session).toMatchObject({ parentId: null, depth: 1, orphan: true });
+
+    const nestedWithoutLink = await run([prompt("task", { agentId: "a2" })], "agent-a2.jsonl", { spawnDepth: 2 });
+    expect(nestedWithoutLink.session).toMatchObject({ parentId: null, orphan: true });
+
+    const nestedWithLink = await run([prompt("task", { agentId: "a3" })], "agent-a3.jsonl", { spawnDepth: 2, toolUseId: "t" });
+    expect(nestedWithLink.session).toMatchObject({ parentId: null, orphan: false });
+  });
+
+  it("never lets an odd entry type smuggle text into the output", async () => {
+    const { session } = await run([JSON.stringify({ type: "SECRET text with spaces" }), JSON.stringify({ type: "x".repeat(80) })]);
+    expect(session.unknownEntryTypes).toEqual({ "(other)": 2 });
+  });
+});
+
 describe("Claude Code adapter: input", () => {
   it("reads lines from an async stream", async () => {
     async function* stream() {
