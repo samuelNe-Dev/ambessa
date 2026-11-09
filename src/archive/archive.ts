@@ -136,6 +136,13 @@ export async function readSessionRecord(root: string, harness: Harness, id: stri
   throw new Error(`Archived session ${id} doesn't start with a supported session record`);
 }
 
+/** Every archived session for a harness, one file at a time. */
+export async function readAllSessions(root: string, harness: Harness): Promise<NormalizedSession[]> {
+  const sessions: NormalizedSession[] = [];
+  for (const id of await listSessionIds(root, harness)) sessions.push(await readSession(root, harness, id));
+  return sessions;
+}
+
 /** Ids of every archived session for a harness. */
 export async function listSessionIds(root: string, harness: Harness): Promise<string[]> {
   try {

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { archiveRoot } from "./archive/archive.js";
+import { archiveRoot, readAllSessions } from "./archive/archive.js";
 import { defaultClaudeCodeSource, ingestClaudeCode } from "./archive/ingest.js";
+import { renderSessions, summarize } from "./report/sessions.js";
 
 /** Everything the CLI touches outside itself. Injected so tests never use the real terminal, home or environment. */
 export interface Context {
@@ -16,6 +17,8 @@ const USAGE = `Usage: ambessa <command> [options]
 Commands:
   ingest     Read new and changed Claude Code sessions into the local archive
                --source <dir>   Transcript folder (default: ~/.claude/projects)
+  sessions   List archived sessions, newest first, with subagents rolled up
+               --limit <n>      How many to show (default: 20)
   help       Show this message
   version    Print the installed version
 
@@ -51,6 +54,8 @@ async function dispatch(args: readonly string[], context: Context): Promise<numb
       return 0;
     case "ingest":
       return ingest(rest, context);
+    case "sessions":
+      return sessions(rest, context);
     default:
       context.err(`Unknown command: ${command}\n\n${USAGE}`);
       return 2;
@@ -96,6 +101,24 @@ async function ingest(args: readonly string[], context: Context): Promise<number
     context.err([`${failed} transcript(s) couldn't be ingested and will be retried next run:`, ...shown, ...more].join("\n"));
     return 1;
   }
+  return 0;
+}
+
+async function sessions(args: readonly string[], context: Context): Promise<number> {
+  let limit = 20;
+  try {
+    const { values } = parseArgs({ args: [...args], options: { limit: { type: "string" } }, strict: true });
+    if (values.limit !== undefined) {
+      limit = Number(values.limit);
+      if (!Number.isInteger(limit) || limit < 1) throw new Error("--limit must be a positive whole number");
+    }
+  } catch (error) {
+    context.err(`${(error as Error).message}\n\n${USAGE}`);
+    return 2;
+  }
+
+  const archived = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
+  context.out(renderSessions(summarize(archived), limit));
   return 0;
 }
 
