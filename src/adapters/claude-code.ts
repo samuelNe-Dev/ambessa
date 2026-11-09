@@ -61,6 +61,7 @@ const INTERRUPTION_PREFIX = "[Request interrupted by user";
 const NON_PROMPT_TAGS = ["<local-command-", "<bash-input", "<bash-stdout", "<bash-stderr"];
 const SUBAGENT_FILE = /^agent-(.+)\.jsonl$/;
 const ENTRY_TYPE = /^[a-z0-9_-]{1,40}$/i;
+const MCP_TOOL_WITH_ID = /^mcp__([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})__(.+)$/i;
 
 type Entry = Record<string, unknown>;
 
@@ -160,7 +161,7 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
         for (const block of blocks(message.content)) {
           const id = str(block.id);
           if (block.type !== "tool_use" || id === null || toolCalls.has(id)) continue;
-          const tool = str(block.name) ?? "(unnamed)";
+          const tool = redactToolName(str(block.name) ?? "(unnamed)");
           const call: ToolCallEvent = {
             kind: "tool_call",
             callId: hashId(HARNESS, "call", id),
@@ -281,6 +282,17 @@ function promptOrigin(entry: Entry, text: string, isSubagent: boolean): TurnOrig
   // Older versions have no turnOrigin. Harness-injected prompts arrive wrapped in a tag,
   // e.g. <task-notification> or <scheduled-task>.
   return trimmed.startsWith("<") ? "automated" : "human";
+}
+
+/**
+ * MCP tools are named `mcp__<server>__<tool>`. Some servers are registered under an id (a UUID),
+ * which identifies an account's connector, so the id is replaced with a short hash.
+ */
+function redactToolName(tool: string): string {
+  const match = MCP_TOOL_WITH_ID.exec(tool);
+  if (match === null) return tool;
+  const [, server = "", name = ""] = match;
+  return `mcp__id-${hashId("mcp-server", server).slice(0, 8)}__${name}`;
 }
 
 function categorize(tool: string): ToolCategory {
