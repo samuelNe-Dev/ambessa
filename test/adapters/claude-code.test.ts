@@ -104,7 +104,18 @@ describe("Claude Code adapter: errors and interruptions", () => {
       ["Read", "read", "unknown", null],
       ["Bash", "shell", "error", "interrupted"],
       ["mcp__github__create_issue", "mcp", "unknown", null],
+      ["Read", "read", "ok", null],
     ]);
+  });
+
+  it("calls a hook block a hook block, even though Claude Code files it as a permission denial", async () => {
+    const calls = ofKind((await load("errors.jsonl")).events, "tool_call");
+    expect(calls[4]).toMatchObject({ tool: "Bash", errorKind: "hook_blocked" });
+  });
+
+  it("treats a structured tool result without an error flag as success", async () => {
+    const calls = ofKind((await load("errors.jsonl")).events, "tool_call");
+    expect(calls[8]).toMatchObject({ tool: "Read", outcome: "ok", line: 10 });
   });
 
   it("counts one model call for a message split across tool calls", async () => {
@@ -115,12 +126,12 @@ describe("Claude Code adapter: errors and interruptions", () => {
   it("records interruptions, API errors and compaction without starting new turns", async () => {
     const { events } = await load("errors.jsonl");
     expect(ofKind(events, "turn")).toHaveLength(1);
-    expect(ofKind(events, "interruption")).toMatchObject([{ turn: 0, line: 17 }]);
+    expect(ofKind(events, "interruption")).toMatchObject([{ turn: 0, line: 19 }]);
     expect(ofKind(events, "api_error")).toMatchObject([
-      { errorKind: "api_error", final: false, line: 18 },
-      { errorKind: "rate_limited", final: true, line: 19 },
+      { errorKind: "api_error", final: false, line: 20 },
+      { errorKind: "rate_limited", final: true, line: 21 },
     ]);
-    expect(ofKind(events, "compaction")).toMatchObject([{ turn: 0, line: 20 }]);
+    expect(ofKind(events, "compaction")).toMatchObject([{ turn: 0, line: 22 }]);
   });
 });
 
