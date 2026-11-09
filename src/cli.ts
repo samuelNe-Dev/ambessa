@@ -117,8 +117,8 @@ async function sessions(args: readonly string[], context: Context): Promise<numb
     return 2;
   }
 
-  const archived = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
-  context.out(renderSessions(summarize(archived), limit));
+  const { sessions, unreadable } = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
+  context.out(renderSessions(summarize(sessions), limit, unreadable));
   return 0;
 }
 

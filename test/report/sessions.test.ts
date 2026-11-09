@@ -59,6 +59,8 @@ describe("summarize", () => {
         unknownOutcomes: 1,
         tokensIn: 116,
         tokensOut: 25,
+        // the grandchild recorded output but not input
+        tokensPartial: true,
         subagents: 2,
       },
     ]);
@@ -84,15 +86,62 @@ describe("summarize", () => {
       session("b", { unknownEntryTypes: { "frame-link": 1, "dev-mods": 4 } }, [tool("error")]),
       session("lost", { depth: 2, orphan: true }, [tool("ok")]),
     ]);
-    expect(summary.totals).toEqual({ sessions: 3, subagents: 1, orphans: 1, turns: 1, toolCalls: 4, toolErrors: 1, unknownOutcomes: 1 });
+    expect(summary.totals).toEqual({ sessions: 3, subagents: 1, turns: 1, toolCalls: 4, toolErrors: 1, unknownOutcomes: 1 });
+    expect(summary.unattached).toEqual({ sessions: 1, toolCalls: 1 });
     expect(summary.unknownEntryTypes).toEqual({ "dev-mods": 4, "frame-link": 3 });
     expect(summary.roots.map((root) => root.id)).toEqual(["a", "b"]);
   });
 
-  it("survives a parent loop without counting forever", () => {
-    const summary = summarize([session("a", { parentId: "b", depth: 1 }), session("b", { parentId: "a", depth: 1 })]);
+  it("survives a parent loop without counting forever, and reports the sessions it couldn't place", () => {
+    const summary = summarize([session("a", { parentId: "b", depth: 1 }, [tool("ok")]), session("b", { parentId: "a", depth: 1 })]);
     expect(summary.roots).toEqual([]);
     expect(summary.totals.sessions).toBe(2);
+    expect(summary.unattached).toEqual({ sessions: 2, toolCalls: 1 });
+  });
+
+  it("marks a token total as partial when some model calls didn't record tokens", () => {
+    const [root] = summarize([
+      session("root", {}, [call({ inputUncached: 5, output: 10 })]),
+      session("child", { parentId: "root", depth: 1 }, [call({})]),
+    ]).roots;
+    expect(root).toMatchObject({ tokensIn: 5, tokensOut: 10, tokensPartial: true });
+  });
+
+  it("orders sessions with the same or an unreadable start time predictably", () => {
+    const summary = summarize([
+      session("b", { startedAt: "2026-11-01T00:00:00.000Z" }),
+      session("bad", { startedAt: "not a date" }),
+      session("a", { startedAt: "2026-11-01T00:00:00.000Z" }),
+    ]);
+    expect(summary.roots.map((root) => root.id)).toEqual(["a", "b", "bad"]);
+  });
+});
+
+describe("renderSessions: honest numbers", () => {
+  it("shows a small but real error rate as <1%, not 0%", () => {
+    const calls = [tool("error"), ...Array.from({ length: 299 }, () => tool("ok"))];
+    const output = renderSessions(summarize([session("root", {}, calls)]), 20);
+    expect(output).toContain("300 tool calls: <1% errors, 0% unknown outcome");
+  });
+
+  it("flags partial token totals and explains the mark", () => {
+    const output = renderSessions(
+      summarize([session("root", {}, [call({ inputUncached: 2_000_000, output: 5_000 }), call({})])]),
+      20,
+    );
+    expect(output).toContain("≥2.0M");
+    expect(output).toContain("≥5.0k");
+    expect(output).toContain("≥ some model calls didn't record tokens, so the true total is higher.");
+  });
+
+  it("lists archived sessions it couldn't read instead of failing", () => {
+    const output = renderSessions(summarize([session("root")]), 20, ["abc123", "def456"]);
+    expect(output).toContain("2 archived sessions couldn't be read: abc123, def456");
+  });
+
+  it("prints an unknown time instead of NaN", () => {
+    const output = renderSessions(summarize([session("root", { startedAt: "garbage" })]), 20);
+    expect(output.split("\n")[1]).toMatch(/^unknown /);
   });
 });
 
@@ -107,6 +156,13 @@ describe("formatCount", () => {
     [1_234_567, "1.2M"],
     [45_200_000, "45M"],
     [2_300_000_000, "2.3B"],
+    [9_949, "9.9k"],
+    [9_950, "10k"],
+    [9_999, "10k"],
+    [999_499, "999k"],
+    [999_500, "1.0M"],
+    [999_999_999, "1.0B"],
+    [1e9, "1.0B"],
   ])("formats %s as %s", (value, expected) => {
     expect(formatCount(value)).toBe(expected);
   });
@@ -136,7 +192,7 @@ describe("renderSessions", () => {
     ]);
     const lines = renderSessions(summary, 1).split("\n");
     expect(lines).toContain("Showing the 1 newest of 2 sessions. Use --limit to see more.");
-    expect(lines).toContain("1 subagent couldn't be linked to its parent.");
+    expect(lines).toContain("1 subagent isn't linked to a listed session; its 0 tool calls count in the totals only.");
     expect(lines).toContain("Unrecognized entry types (the adapter may need an update): frame-link 15");
   });
 });

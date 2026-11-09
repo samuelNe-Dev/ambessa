@@ -275,3 +275,16 @@ describe("ambessa sessions", () => {
     expect(result.out).toContain("No sessions in the archive yet. Run `ambessa ingest` first.");
   });
 });
+
+describe("ambessa sessions: damaged archive", () => {
+  it("lists what it can and names the archived sessions it couldn't read", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+    writeFileSync(join(root, "sessions/claude-code/badbadbad.jsonl"), "{truncated");
+
+    const result = await invoke(["sessions"], { AMBESSA_HOME: root });
+    expect(result.code).toBe(0);
+    expect(result.out).toContain("1 session (+0 subagents)");
+    expect(result.out).toContain("1 archived session couldn't be read: badbadbad");
+  });
+});

@@ -13,21 +13,25 @@ export interface SessionSummary {
   /** Uncached input plus cache reads and writes. `null` when no model call recorded any. */
   tokensIn: number | null;
   tokensOut: number | null;
+  /** Some model calls didn't record tokens, so the totals are lower bounds. */
+  tokensPartial: boolean;
   subagents: number;
 }
 
 export interface ArchiveSummary {
   /** Newest first. */
   roots: SessionSummary[];
+  /** Every archived session, whether or not it appears under a root. */
   totals: {
     sessions: number;
     subagents: number;
-    orphans: number;
     turns: number;
     toolCalls: number;
     toolErrors: number;
     unknownOutcomes: number;
   };
+  /** Sessions that no root reaches (orphaned subagents, a parent that isn't archived, damaged links). */
+  unattached: { sessions: number; toolCalls: number };
   /** Entry types the adapter didn't recognize, across the archive. Growth means the adapter is drifting. */
   unknownEntryTypes: Record<string, number>;
 }
@@ -39,30 +43,36 @@ export function summarize(sessions: readonly NormalizedSession[]): ArchiveSummar
     if (parentId !== null) children.set(parentId, [...(children.get(parentId) ?? []), entry]);
   }
 
+  const placed = new Set<string>();
   const roots = sessions
     .filter(({ session }) => session.depth === 0)
-    .map((root) => summarizeTree(root, children))
+    .map((root) => summarizeTree(root, children, placed))
     .sort(byNewest);
 
-  const totals = { sessions: sessions.length, subagents: 0, orphans: 0, turns: 0, toolCalls: 0, toolErrors: 0, unknownOutcomes: 0 };
+  const totals = { sessions: sessions.length, subagents: 0, turns: 0, toolCalls: 0, toolErrors: 0, unknownOutcomes: 0 };
+  const unattached = { sessions: 0, toolCalls: 0 };
   const unknownEntryTypes: Record<string, number> = {};
   for (const { session, events } of sessions) {
-    if (session.depth > 0) totals.subagents += 1;
-    if (session.orphan) totals.orphans += 1;
     const counts = countEvents(events);
-    if (session.depth === 0) totals.turns += counts.turns;
+    if (session.depth > 0) totals.subagents += 1;
+    else totals.turns += counts.turns;
     totals.toolCalls += counts.toolCalls;
     totals.toolErrors += counts.toolErrors;
     totals.unknownOutcomes += counts.unknownOutcomes;
+    if (!placed.has(session.id)) {
+      unattached.sessions += 1;
+      unattached.toolCalls += counts.toolCalls;
+    }
     for (const [type, count] of Object.entries(session.unknownEntryTypes)) {
       unknownEntryTypes[type] = (unknownEntryTypes[type] ?? 0) + count;
     }
   }
 
-  return { roots, totals, unknownEntryTypes: Object.fromEntries(Object.entries(unknownEntryTypes).sort(([a], [b]) => a.localeCompare(b))) };
+  const sortedTypes = Object.fromEntries(Object.entries(unknownEntryTypes).sort(([a], [b]) => a.localeCompare(b)));
+  return { roots, totals, unattached, unknownEntryTypes: sortedTypes };
 }
 
-function summarizeTree(root: NormalizedSession, children: ReadonlyMap<string, NormalizedSession[]>): SessionSummary {
+function summarizeTree(root: NormalizedSession, children: ReadonlyMap<string, NormalizedSession[]>, placed: Set<string>): SessionSummary {
   const summary: SessionSummary = {
     id: root.session.id,
     startedAt: root.session.startedAt,
@@ -73,15 +83,15 @@ function summarizeTree(root: NormalizedSession, children: ReadonlyMap<string, No
     unknownOutcomes: 0,
     tokensIn: null,
     tokensOut: null,
+    tokensPartial: false,
     subagents: 0,
   };
 
-  const seen = new Set<string>();
   const pending = [root];
   while (pending.length > 0) {
     const current = pending.pop()!;
-    if (seen.has(current.session.id)) continue; // guards against a parent loop in damaged data
-    seen.add(current.session.id);
+    if (placed.has(current.session.id)) continue; // guards against a parent loop in damaged data
+    placed.add(current.session.id);
     if (current !== root) summary.subagents += 1;
 
     const counts = countEvents(current.events);
@@ -95,13 +105,25 @@ function summarizeTree(root: NormalizedSession, children: ReadonlyMap<string, No
     summary.unknownOutcomes += counts.unknownOutcomes;
     summary.tokensIn = add(summary.tokensIn, counts.tokensIn);
     summary.tokensOut = add(summary.tokensOut, counts.tokensOut);
+    summary.tokensPartial ||= counts.unrecordedCalls > 0;
     pending.push(...(children.get(current.session.id) ?? []));
   }
+  // Partial only matters next to a number; with nothing recorded the total is simply unknown.
+  summary.tokensPartial &&= summary.tokensIn !== null || summary.tokensOut !== null;
   return summary;
 }
 
 function countEvents(events: readonly SessionEvent[]) {
-  const counts = { turns: 0, humanTurns: 0, toolCalls: 0, toolErrors: 0, unknownOutcomes: 0, tokensIn: null as number | null, tokensOut: null as number | null };
+  const counts = {
+    turns: 0,
+    humanTurns: 0,
+    toolCalls: 0,
+    toolErrors: 0,
+    unknownOutcomes: 0,
+    tokensIn: null as number | null,
+    tokensOut: null as number | null,
+    unrecordedCalls: 0,
+  };
   for (const event of events) {
     if (event.kind === "turn") {
       counts.turns += 1;
@@ -111,7 +133,9 @@ function countEvents(events: readonly SessionEvent[]) {
       if (event.outcome === "error") counts.toolErrors += 1;
       if (event.outcome === "unknown") counts.unknownOutcomes += 1;
     } else if (event.kind === "model_call") {
-      counts.tokensIn = add(counts.tokensIn, inputTokens(event.usage));
+      const input = inputTokens(event.usage);
+      if (input === null || event.usage.output === null) counts.unrecordedCalls += 1;
+      counts.tokensIn = add(counts.tokensIn, input);
       counts.tokensOut = add(counts.tokensOut, event.usage.output);
     }
   }
@@ -129,56 +153,75 @@ function add(a: number | null, b: number | null): number | null {
   return a + b;
 }
 
+/** Newest first; unknown or unreadable start times last; ties broken by id so the order never depends on disk order. */
 function byNewest(a: SessionSummary, b: SessionSummary): number {
-  if (a.startedAt === null) return b.startedAt === null ? 0 : 1;
-  if (b.startedAt === null) return -1;
-  return Date.parse(b.startedAt) - Date.parse(a.startedAt);
+  const time = (summary: SessionSummary) => (summary.startedAt === null ? NaN : Date.parse(summary.startedAt));
+  const [left, right] = [time(a), time(b)];
+  if (Number.isNaN(left) !== Number.isNaN(right)) return Number.isNaN(left) ? 1 : -1;
+  if (!Number.isNaN(left) && left !== right) return right - left;
+  return a.id.localeCompare(b.id);
 }
 
-/** Short human-readable counts: 950, 1.0k, 12k, 1.2M, 45M. */
+const UNITS = [
+  [1e3, "k"],
+  [1e6, "M"],
+  [1e9, "B"],
+] as const;
+
+/** Short human-readable counts: 950, 1.0k, 12k, 1.2M, 45M. Rounds first, so 999,500 reads 1.0M, not 1000k. */
 export function formatCount(value: number | null): string {
   if (value === null) return "–";
-  for (const [size, suffix] of [
-    [1e9, "B"],
-    [1e6, "M"],
-    [1e3, "k"],
-  ] as const) {
-    if (value >= size) {
-      const scaled = value / size;
-      return `${scaled < 10 ? scaled.toFixed(1) : Math.round(scaled).toString()}${suffix}`;
-    }
+  const rounded = Math.round(value);
+  if (rounded < 1000) return rounded.toString();
+  let result = "";
+  for (const [size, suffix] of UNITS) {
+    const scaled = rounded / size;
+    const shown = scaled < 9.95 ? Math.round(scaled * 10) / 10 : Math.round(scaled);
+    result = shown < 10 ? `${shown.toFixed(1)}${suffix}` : `${shown}${suffix}`;
+    if (shown < 1000) break; // otherwise the next unit reads better: 1.0M, not 1000k
   }
-  return Math.round(value).toString();
+  return result;
 }
 
-export function renderSessions(summary: ArchiveSummary, limit: number): string {
+export function renderSessions(summary: ArchiveSummary, limit: number, unreadable: readonly string[] = []): string {
   const shown = summary.roots.slice(0, limit);
   const header = ["Started", "Turns", "Tools", "Errors", "Unknown", "Tokens in", "Out", "Subagents"];
+  const lowerBound = (value: number | null, partial: boolean) => `${partial && value !== null ? "≥" : ""}${formatCount(value)}`;
   const rows = shown.map((root) => [
     formatTime(root.startedAt),
     String(root.turns),
     String(root.toolCalls),
     String(root.toolErrors),
     percent(root.unknownOutcomes, root.toolCalls),
-    formatCount(root.tokensIn),
-    formatCount(root.tokensOut),
+    lowerBound(root.tokensIn, root.tokensPartial),
+    lowerBound(root.tokensOut, root.tokensPartial),
     String(root.subagents),
   ]);
 
   const lines = rows.length > 0 ? table(header, rows) : ["No sessions in the archive yet. Run `ambessa ingest` first."];
-  const { totals } = summary;
-  const rootCount = totals.sessions - totals.subagents;
+  const { totals, unattached } = summary;
   lines.push(
     "",
-    `${plural(rootCount, "session")} (+${plural(totals.subagents, "subagent")}) · ${plural(totals.turns, "turn")} · ` +
+    `${plural(totals.sessions - totals.subagents, "session")} (+${plural(totals.subagents, "subagent")}) · ${plural(totals.turns, "turn")} · ` +
       `${plural(totals.toolCalls, "tool call")}: ${percent(totals.toolErrors, totals.toolCalls)} errors, ` +
       `${percent(totals.unknownOutcomes, totals.toolCalls)} unknown outcome`,
   );
   if (summary.roots.length > shown.length) {
     lines.push(`Showing the ${shown.length} newest of ${summary.roots.length} sessions. Use --limit to see more.`);
   }
-  if (totals.orphans > 0) {
-    lines.push(`${plural(totals.orphans, "subagent")} couldn't be linked to ${totals.orphans === 1 ? "its" : "their"} parent.`);
+  if (shown.some((root) => root.tokensPartial)) {
+    lines.push("≥ some model calls didn't record tokens, so the true total is higher.");
+  }
+  if (unattached.sessions > 0) {
+    const one = unattached.sessions === 1;
+    lines.push(
+      `${plural(unattached.sessions, "subagent")} ${one ? "isn't" : "aren't"} linked to a listed session; ` +
+        `${one ? "its" : "their"} ${plural(unattached.toolCalls, "tool call")} count in the totals only.`,
+    );
+  }
+  if (unreadable.length > 0) {
+    const listed = unreadable.slice(0, 3).join(", ") + (unreadable.length > 3 ? ", …" : "");
+    lines.push(`${plural(unreadable.length, "archived session")} couldn't be read: ${listed}`);
   }
   const drift = Object.entries(summary.unknownEntryTypes).map(([type, count]) => `${type} ${count}`);
   if (drift.length > 0) lines.push(`Unrecognized entry types (the adapter may need an update): ${drift.join(", ")}`);
@@ -193,15 +236,21 @@ function table(header: string[], rows: string[][]): string[] {
   return [line(header), ...rows.map(line)];
 }
 
+/** Local time, minutes precision. */
 function formatTime(iso: string | null): string {
-  if (iso === null) return "unknown";
-  const date = new Date(iso);
+  const date = iso === null ? null : new Date(iso);
+  if (date === null || Number.isNaN(date.getTime())) return "unknown";
   const two = (value: number) => String(value).padStart(2, "0");
   return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
 }
 
+/** Never rounds a real count away: 1 in 300 is "<1%", not "0%". */
 function percent(part: number, whole: number): string {
-  return whole === 0 ? "–" : `${Math.round((part / whole) * 100)}%`;
+  if (whole === 0) return "–";
+  const value = Math.round((part / whole) * 100);
+  if (value === 0 && part > 0) return "<1%";
+  if (value === 100 && part < whole) return ">99%";
+  return `${value}%`;
 }
 
 function plural(count: number, noun: string): string {

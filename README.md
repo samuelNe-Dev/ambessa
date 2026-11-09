@@ -32,7 +32,7 @@ Started           Turns  Tools  Errors  Unknown  Tokens in   Out  Subagents
 232 sessions (+213 subagents) · 2,374 turns · 35,646 tool calls: 3% errors, 12% unknown outcome
 ```
 
-The archive holds structure and numbers only: no prompts, code, file paths or account ids. Set `AMBESSA_HOME` to keep it somewhere else.
+Times are local. The archive holds structure and numbers only: no prompts, code, file paths or account ids. Set `AMBESSA_HOME` to keep it somewhere else.
 
 ## Principles
 
