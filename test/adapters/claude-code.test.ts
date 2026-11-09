@@ -261,6 +261,20 @@ describe("Claude Code adapter: edge cases", () => {
     expect(nestedWithLink.session).toMatchObject({ parentId: null, orphan: false });
   });
 
+  it("hashes MCP server names that are ids, keeping the tool name", async () => {
+    const server = "0f3c2a1b-9d8e-4f7a-b6c5-d4e3f2a1b0c9";
+    const { events } = await run([
+      prompt("go"),
+      assistant("m1", [
+        { type: "tool_use", id: "a", name: `mcp__${server}__apply_migration`, input: {} },
+        { type: "tool_use", id: "b", name: "mcp__github__create_issue", input: {} },
+      ]),
+    ]);
+    const tools = ofKind(events, "tool_call").map((call) => call.tool);
+    expect(tools).toEqual([`mcp__id-${hashId("mcp-server", server).slice(0, 8)}__apply_migration`, "mcp__github__create_issue"]);
+    expect(JSON.stringify(events)).not.toContain(server.slice(0, 8));
+  });
+
   it("never lets an odd entry type smuggle text into the output", async () => {
     const { session } = await run([JSON.stringify({ type: "SECRET text with spaces" }), JSON.stringify({ type: "x".repeat(80) })]);
     expect(session.unknownEntryTypes).toEqual({ "(other)": 2 });
