@@ -13,4 +13,5 @@ One entry per working day: what changed, what I learned, what's next. Newest fir
 - Three lessons from real data and review. A line reader created before an unrelated `await` can close before anyone reads it and hang forever. Subagent meta files are `agent-<id>.meta.json`, not `.json`; the tests passed on the wrong name, so tests built on assumptions only check those assumptions. And MCP connectors can be registered under account UUIDs, which were leaking into tool names. That led to [decision record 0002](docs/decisions/0002-mcp-server-names.md).
 - Added `ambessa sessions`: root sessions newest first, with subagents' tool calls and tokens rolled up. One design call made by a failing test: a subagent's prompts don't count as turns, because they come from its parent agent, not from me. Counting them would inflate every per-turn rate. Over my archive it reads 232 sessions in 0.9 s.
 - Prepared v0.0.1.
-- **Next:** publish v0.0.1, then v0.0.2: friction signals.
+- Held back the npm release. Publishing from an agent's shell can't answer npm's interactive login. Rather than keep a long-lived token on my laptop, I'll publish from GitHub Actions with npm trusted publishing ([#5](https://github.com/samuelNe-Dev/ambessa/issues/5)). Until then the README says to run from source.
+- **Next:** v0.0.2: friction signals.
