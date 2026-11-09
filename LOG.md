@@ -14,4 +14,7 @@ One entry per working day: what changed, what I learned, what's next. Newest fir
 - Added `ambessa sessions`: root sessions newest first, with subagents' tool calls and tokens rolled up. One design call made by a failing test: a subagent's prompts don't count as turns, because they come from its parent agent, not from me. Counting them would inflate every per-turn rate. Over my archive it reads 232 sessions in 0.9 s.
 - Prepared v0.0.1.
 - Held back the npm release. Publishing from an agent's shell can't answer npm's interactive login. Rather than keep a long-lived token on my laptop, I'll publish from GitHub Actions with npm trusted publishing ([#5](https://github.com/samuelNe-Dev/ambessa/issues/5)). Until then the README says to run from source.
-- **Next:** v0.0.2: friction signals.
+- Built v0.0.2, friction signals ([decision record 0003](docs/decisions/0003-friction-signals.md)). There are 12 signals, each a rate in its own unit (per 100 tool, shell, write or read calls, or per human turn), compared week over week. Text-only signals like "File has been modified since read" are tagged at ingest, so the archive still holds no text.
+- First real reading: `stale-file` is my biggest text-tagged friction at about 3 in every 100 edits, and tokens per human turn halved this week (9.2M to 4.3M). Real data also caught one more misleading number: a tiny but real rate printed as `0.00`. It now prints `<0.01`.
+- Writing the tests first caught two of my own mistakes before any code existed: exactly −20% is not a trend under a "more than 20%" rule, and a session with a human turn but no model calls still lowers the average tokens per turn.
+- **Next:** v0.0.3: proposals with recorded baselines.

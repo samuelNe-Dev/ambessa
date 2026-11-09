@@ -161,7 +161,8 @@ describe("compareWeeks", () => {
   });
 
   it("calls a change of 20% or less flat", () => {
-    expect(trendOf([...week(3, 5, 5), ...week(10, 5, 4)], "tool-errors")).toBe("down");
+    expect(trendOf([...week(3, 5, 5), ...week(10, 5, 3)], "tool-errors")).toBe("down");
+    expect(trendOf([...week(3, 5, 5), ...week(10, 5, 4)], "tool-errors")).toBe("flat");
     expect(trendOf([...week(3, 5, 5), ...week(10, 5, 6)], "tool-errors")).toBe("flat");
   });
 
@@ -176,6 +177,12 @@ describe("compareWeeks", () => {
 });
 
 describe("renderSignals", () => {
+  it("never rounds a real but tiny rate down to zero", () => {
+    const now = new Date("2026-11-15T00:00:00Z");
+    const sessions = Array.from({ length: 300 }, (_, index) => session(`s${index}`, { startedAt: at(10) }, index === 0 ? [turn(), interruption()] : [turn()]));
+    expect(renderSignals(compareWeeks(sessions, now, RULES))).toMatch(/ {2}interruptions +per human turn +– +<0\.01 +too few sessions/);
+  });
+
   it("prints both weeks, grouped signals and what was left out", () => {
     const now = new Date("2026-11-15T00:00:00Z");
     const sessions = [
@@ -189,7 +196,8 @@ describe("renderSignals", () => {
 
     expect(lines[0]).toBe("This week: 2026-11-08 → 2026-11-15, 7 sessions · last week: 2026-11-01 → 2026-11-08, 5 sessions");
     expect(output).toMatch(/Tool friction\n {2}tool-errors +per 100 tool calls +50 +0 +down \(better\)/);
-    expect(output).toMatch(/ {2}tokens +per human turn +1\.5k +1\.5k +flat/);
+    // "old" has a human turn but no model calls: 5 × 1,500 tokens over 6 human turns.
+    expect(output).toMatch(/ {2}tokens +per human turn +1\.5k +1\.3k +flat/);
     expect(output).toMatch(/ {2}interruptions +per human turn +0 +0 +flat/);
     expect(output).toMatch(/ {2}read-before-write +per 100 write calls +– +– +too few sessions/);
     expect(output).toContain("1 session with no human turns is left out of per-human-turn signals.");

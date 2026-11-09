@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { run } from "../src/cli.js";
 
-export async function invoke(args: string[], env: Record<string, string> = {}, home = "/nonexistent-home") {
+export async function invoke(args: string[], env: Record<string, string> = {}, home = "/nonexistent-home", now = new Date("2026-11-15T00:00:00Z")) {
   const out: string[] = [];
   const err: string[] = [];
-  const code = await run(args, { out: (line) => out.push(line), err: (line) => err.push(line), env, home });
+  const code = await run(args, { out: (line) => out.push(line), err: (line) => err.push(line), env, home, now: () => now });
   return { code, out: out.join("\n"), err: err.join("\n") };
 }
 
