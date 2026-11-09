@@ -17,11 +17,13 @@ On top of that loop runs a **factory**. It picks the next issue, builds it in an
 
 ## Try it
 
-Needs Node 22.12 or newer.
+Needs Node 22.12 or newer. Ambessa isn't on npm yet ([#5](https://github.com/samuelNe-Dev/ambessa/issues/5)), so run it from source:
 
 ```sh
-npx ambessa ingest     # read your Claude Code sessions into ~/.ambessa
-npx ambessa sessions   # list them, newest first
+git clone https://github.com/samuelNe-Dev/ambessa && cd ambessa
+npm ci && npm run build
+node dist/bin.js ingest     # read your Claude Code sessions into ~/.ambessa
+node dist/bin.js sessions   # list them, newest first
 ```
 
 ```text
@@ -40,7 +42,7 @@ Times are local. The archive holds structure and numbers only: no prompts, code,
 - **No model calls.** The CLI is deterministic: it counts, compares and schedules. Judgement, such as writing a proposal, runs inside the agent you already use, through plain markdown skills.
 - **Your data stays local.** Sessions, code and project names never leave your machine. Only aggregate numbers are shared, and only when you choose to.
 - **Evidence before claims.** Every self-change carries a baseline and a grade. Every factory PR carries proof.
-- **Zero runtime dependencies.** TypeScript on Node 22.12+, run with `npx ambessa`.
+- **Zero runtime dependencies.** TypeScript on Node 22.12+.
 
 ## Roadmap
 
