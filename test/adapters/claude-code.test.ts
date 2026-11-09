@@ -128,7 +128,8 @@ describe("Claude Code adapter: errors and interruptions", () => {
   it("records interruptions, API errors and compaction without starting new turns", async () => {
     const { events } = await load("errors.jsonl");
     expect(ofKind(events, "turn")).toHaveLength(1);
-    expect(ofKind(events, "interruption")).toMatchObject([{ turn: 0, line: 19 }]);
+    // "[Request interrupted by user for tool use]" follows a tool call that already records the interruption.
+    expect(ofKind(events, "interruption")).toEqual([]);
     expect(ofKind(events, "api_error")).toMatchObject([
       { errorKind: "api_error", final: false, line: 20 },
       { errorKind: "rate_limited", final: true, line: 21 },
@@ -180,9 +181,27 @@ describe("Claude Code adapter: text-tagged signals", () => {
     ).toEqual([[], [], []]);
   });
 
+  it("doesn't tag text that a failed edit merely quotes back", async () => {
+    const content = "<tool_use_error>String to replace not found in file.\nString: expect(x).toBe('File has not been read yet')</tool_use_error>";
+    expect(await signalsOf([["a", "Edit", { is_error: true, content }]])).toEqual([[]]);
+  });
+
   it("tags the errors fixture's write-before-read", async () => {
     const calls = ofKind((await load("errors.jsonl")).events, "tool_call");
     expect(calls[1]).toMatchObject({ tool: "Write", signals: ["read-before-write"] });
+  });
+});
+
+describe("Claude Code adapter: interruptions", () => {
+  it("records the user stopping a reply, but not the follow-up to a stopped tool", async () => {
+    const T = "2026-11-06T10:00:00.000Z";
+    const text = (content: string) => JSON.stringify({ type: "user", sessionId: "s", timestamp: T, message: { role: "user", content: [{ type: "text", text: content }] } });
+    const { events } = await normalizeClaudeCode({
+      file: "s.jsonl",
+      lines: [text("go"), text("[Request interrupted by user]"), text("[Request interrupted by user for tool use]")],
+    });
+    expect(ofKind(events, "interruption")).toMatchObject([{ line: 2 }]);
+    expect(ofKind(events, "turn")).toHaveLength(1);
   });
 });
 

@@ -327,7 +327,8 @@ describe("ambessa signals", () => {
     const result = await invoke(["signals"], { AMBESSA_HOME: root }, "/nonexistent-home", new Date("2026-11-08T00:00:00Z"));
     expect(result).toMatchObject({ code: 0, err: "" });
     expect(result.out.split("\n")[0]).toBe("This week: 2026-11-01 → 2026-11-08, 2 sessions · last week: 2026-10-25 → 2026-11-01, 0 sessions");
-    expect(result.out).toMatch(/ {2}tool-errors +per 100 tool calls +– +60 +too few sessions/);
+    // errors.jsonl: 2 real failures among 10 calls; its rejection, interruption and blocks count elsewhere.
+    expect(result.out).toMatch(/ {2}tool-errors +per 100 tool calls +– +20 +too few sessions/);
     expect(result.out).toMatch(/ {2}read-before-write +per 100 write calls +– +50 +too few sessions/);
   });
 });

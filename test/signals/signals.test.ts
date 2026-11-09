@@ -21,7 +21,8 @@ describe("measure", () => {
       window,
       RULES,
     );
-    expect(measurements["tool-errors"]).toEqual({ hits: 2, exposure: 4, sessions: 1, rate: 50 });
+    // The permission block is the user's policy, not the agent's failure: it counts in `blocked` only.
+    expect(measurements["tool-errors"]).toEqual({ hits: 1, exposure: 4, sessions: 1, rate: 25 });
     expect(measurements["nonzero-exit"]).toEqual({ hits: 1, exposure: 2, sessions: 1, rate: 50 });
     expect(measurements.blocked).toEqual({ hits: 1, exposure: 4, sessions: 1, rate: 25 });
   });
@@ -38,6 +39,50 @@ describe("measure", () => {
       RULES,
     );
     expect(measurements["retry-loops"]).toMatchObject({ hits: 2, exposure: 10 });
+  });
+
+  it("lands each user or policy decision in exactly one signal", () => {
+    const { measurements } = measure(
+      [
+        session("a", { startedAt: at(2) }, [
+          turn(),
+          tool("Bash", "shell", "error", "rejected_by_user"),
+          tool("Bash", "shell", "error", "interrupted"),
+          tool("Bash", "shell", "error", "hook_blocked"),
+          tool("Edit", "write", "error", "permission_denied"),
+          interruption(),
+        ]),
+      ],
+      window,
+      RULES,
+    );
+    expect(measurements["tool-errors"].hits).toBe(0);
+    expect(measurements["rejected-calls"].hits).toBe(1);
+    expect(measurements.blocked.hits).toBe(2);
+    // Stopping a running tool and stopping a reply are both the user interrupting.
+    expect(measurements.interruptions.hits).toBe(2);
+    expect(measurements["retry-loops"].hits).toBe(0);
+  });
+
+  it("only counts a retry loop for real failures within one turn", () => {
+    const failing = (turnIndex: number) => ({ ...tool("Bash", "shell", "error", "nonzero_exit"), turn: turnIndex });
+    const { measurements } = measure(
+      [
+        session("a", { startedAt: at(2) }, [
+          failing(0),
+          failing(1), // a new prompt in between: not a retry
+          tool("Bash", "shell"),
+          tool("Bash", "shell", "error", "rejected_by_user"),
+          tool("Bash", "shell", "error", "rejected_by_user"), // two rejections: the user, not the agent
+          tool("Bash", "shell"),
+          failing(1),
+          failing(1), // the one real loop
+        ]),
+      ],
+      window,
+      RULES,
+    );
+    expect(measurements["retry-loops"].hits).toBe(1);
   });
 
   it("measures conversation, cost and context per human turn, with subagents rolled in", () => {
