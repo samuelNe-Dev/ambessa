@@ -5,7 +5,7 @@ import type { NormalizedSession, SessionEvent, SessionRecord, Usage } from "../.
 function session(id: string, overrides: Partial<SessionRecord> = {}, events: SessionEvent[] = []): NormalizedSession {
   return {
     session: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       kind: "session",
       id,
       harness: "claude-code",
@@ -19,6 +19,7 @@ function session(id: string, overrides: Partial<SessionRecord> = {}, events: Ses
       source: { file: "x.jsonl" },
       unknownEntryTypes: {},
       unparseableLines: 0,
+      rulesVersion: 1,
       ...overrides,
     },
     events,
@@ -34,6 +35,7 @@ const tool = (outcome: "ok" | "error" | "unknown"): SessionEvent => ({
   category: "shell",
   outcome,
   errorKind: outcome === "error" ? "nonzero_exit" : null,
+  signals: [],
   at: null,
   line: 1,
 });

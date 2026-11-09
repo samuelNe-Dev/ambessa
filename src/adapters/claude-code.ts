@@ -8,6 +8,7 @@ import {
   type SessionEvent,
   type ToolCallEvent,
   type ToolCategory,
+  type TextSignal,
   type ToolOutcome,
   type TurnOrigin,
   type Usage,
@@ -29,6 +30,16 @@ export interface ClaudeCodeInput {
 }
 
 const HARNESS = "claude-code";
+
+/** Bump whenever TEXT_RULES change, so the next ingest re-tags every transcript still on disk. */
+export const CLAUDE_CODE_RULES_VERSION = 1;
+
+/** Claude Code's own wording for errors that only text reveals. Each rule applies to failed calls of one category. */
+const TEXT_RULES: { signal: TextSignal; category: ToolCategory; pattern: RegExp }[] = [
+  { signal: "read-before-write", category: "write", pattern: /File has not been read yet/i },
+  { signal: "stale-file", category: "write", pattern: /File has been modified since (it was )?read/i },
+  { signal: "file-not-found", category: "read", pattern: /File does not exist/i },
+];
 
 /** Entry types the adapter understands but doesn't need: bookkeeping, titles, account and cost snapshots. */
 const IGNORED_TYPES = new Set([
@@ -119,6 +130,7 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
             const { outcome, errorKind } = classifyResult(block, entry);
             call.outcome = outcome;
             call.errorKind = errorKind;
+            if (outcome === "error") call.signals = textSignals(call.category, messageText(block.content));
           }
           break;
         }
@@ -170,6 +182,7 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
             category: categorize(tool),
             outcome: "unknown",
             errorKind: null,
+            signals: [],
             at,
             line: lineNumber,
           };
@@ -239,9 +252,14 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
       source: { file: input.file },
       unknownEntryTypes,
       unparseableLines,
+      rulesVersion: CLAUDE_CODE_RULES_VERSION,
     },
     events,
   };
+}
+
+function textSignals(category: ToolCategory, text: string): TextSignal[] {
+  return TEXT_RULES.filter((rule) => rule.category === category && rule.pattern.test(text)).map((rule) => rule.signal);
 }
 
 function classifyResult(block: Entry, entry: Entry): { outcome: ToolOutcome; errorKind: ErrorKind | null } {

@@ -64,7 +64,7 @@ describe("ingest", () => {
     await ingestClaudeCode(root, source);
     const [id] = await listSessionIds(root, "claude-code");
     const lines = readFileSync(join(root, "sessions/claude-code", `${id}.jsonl`), "utf8").trim().split("\n");
-    expect(lines.map((line) => JSON.parse(line).schemaVersion)).toEqual(lines.map(() => 1));
+    expect(lines.map((line) => JSON.parse(line).schemaVersion)).toEqual(lines.map(() => 2));
   });
 
   it("skips unchanged transcripts and re-reads ones that grew", async () => {
@@ -146,6 +146,35 @@ describe("ingest", () => {
         expect(text).not.toContain(secret);
       }
     }
+  });
+});
+
+describe("ingest: schema and rule upgrades", () => {
+  it("reads a version 1 session as having no tags and rules version 0", async () => {
+    const directory = join(root, "sessions/claude-code");
+    mkdirSync(directory, { recursive: true });
+    const v1 = [
+      { schemaVersion: 1, kind: "session", id: "old", harness: "claude-code", harnessVersion: null, parentId: null, depth: 0, orphan: false, spawnedByCallId: null, startedAt: null, endedAt: null, source: { file: "x" }, unknownEntryTypes: {}, unparseableLines: 0 },
+      { schemaVersion: 1, kind: "tool_call", callId: "c", turn: 0, tool: "Write", category: "write", outcome: "error", errorKind: "other", at: null, line: 2 },
+    ];
+    writeFileSync(join(directory, "old.jsonl"), v1.map((record) => JSON.stringify(record)).join("\n") + "\n");
+
+    const { session, events } = await readSession(root, "claude-code", "old");
+    expect(session).toMatchObject({ schemaVersion: 2, rulesVersion: 0 });
+    expect(events[0]).toMatchObject({ kind: "tool_call", signals: [] });
+    expect(await readSessionRecord(root, "claude-code", "old")).toMatchObject({ rulesVersion: 0 });
+  });
+
+  it("re-tags unchanged transcripts when the text rules changed", async () => {
+    place("errors.jsonl", "p/sess-errors.jsonl");
+    await ingestClaudeCode(root, source);
+    const statePath = join(root, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    for (const entry of Object.values(state.sources) as { rulesVersion: number }[]) entry.rulesVersion = 0;
+    writeFileSync(statePath, JSON.stringify(state));
+
+    expect(await ingestClaudeCode(root, source)).toMatchObject({ updated: 1, unchanged: 0 });
+    expect(await ingestClaudeCode(root, source)).toMatchObject({ updated: 0, unchanged: 1 });
   });
 });
 
