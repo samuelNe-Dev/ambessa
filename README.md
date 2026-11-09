@@ -54,9 +54,9 @@ Times are local. The archive holds structure and numbers only: no prompts, code,
 | v0.0.3 | Proposals with recorded baselines |
 | v0.0.4 | Grading and automatic revert |
 | **v0.1.0** | **The full improvement loop** |
-| v0.2 | Codex adapter |
-| v0.3 | Factory: web projects (Next.js, Vite) |
-| v0.4 | Factory: iOS projects (SwiftUI, simulator evidence) |
+| v0.2 | Factory: web projects (Next.js, Vite) |
+| v0.3 | Factory: iOS projects (SwiftUI, simulator evidence) |
+| v0.4 | Codex adapter |
 | v1.0 | Everything above, dogfooded on real projects |
 
 ## How it's built
