@@ -1,0 +1,21 @@
+{
+  "name": "ambessa",
+  "version": "0.0.0",
+  "description": "A self-improving software factory for coding agents: builds issues into proven PRs, measures every session, and keeps only the changes to itself that measurably help.",
+  "keywords": ["ai", "agents", "coding-agents", "claude-code", "codex", "evaluation", "developer-tools"],
+  "homepage": "https://github.com/samuelNe-Dev/ambessa#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samuelNe-Dev/ambessa.git"
+  },
+  "bugs": "https://github.com/samuelNe-Dev/ambessa/issues",
+  "license": "MIT",
+  "author": "Samuel Negash",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "README.md",
+    "LICENSE"
+  ]
+}
