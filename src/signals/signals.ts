@@ -43,6 +43,13 @@ export const SIGNALS: readonly SignalDefinition[] = [
 
 const TEXT_SIGNALS = new Set<SignalId>(["read-before-write", "stale-file", "file-not-found"]);
 
+/**
+ * The agent's own tool failures. Rejections, interruptions and permission or hook blocks are
+ * decisions by the user or their policy; each has its own signal, so no event counts twice.
+ */
+const AGENT_FAILURES = new Set(["nonzero_exit", "other"]);
+const isAgentFailure = (call: ToolCallEvent) => call.outcome === "error" && call.errorKind !== null && AGENT_FAILURES.has(call.errorKind);
+
 /** A trend needs this many qualifying sessions in each week. */
 export const MIN_SESSIONS = 5;
 /** A change beyond this (relative) is a trend. */
@@ -161,10 +168,12 @@ function countEvent(event: SessionEvent, isRoot: boolean, exposure: Record<Unit,
       if (event.category === "shell") exposure.shell += 1;
       if (event.category === "write") exposure.write += 1;
       if (event.category === "read") exposure.read += 1;
-      if (event.outcome === "error") hits["tool-errors"] += 1;
+      if (isAgentFailure(event)) hits["tool-errors"] += 1;
       if (event.errorKind === "nonzero_exit" && event.category === "shell") hits["nonzero-exit"] += 1;
       if (event.errorKind === "permission_denied" || event.errorKind === "hook_blocked") hits.blocked += 1;
       if (event.errorKind === "rejected_by_user") hits["rejected-calls"] += 1;
+      // Stopping a running tool is an interruption too; the adapter doesn't also emit a separate one.
+      if (event.errorKind === "interrupted") hits.interruptions += 1;
       for (const signal of event.signals) hits[signal] += 1;
       break;
     case "interruption":
@@ -186,13 +195,17 @@ function countEvent(event: SessionEvent, isRoot: boolean, exposure: Record<Unit,
   }
 }
 
-/** Runs of the same tool failing two or more times in a row, each run counted once. */
+/**
+ * Runs of the same tool failing two or more times in a row within one turn, each run counted once.
+ * Only the agent's own failures count: a rejection, a block or a new prompt breaks the run.
+ */
 function retryLoops(calls: readonly ToolCallEvent[]): number {
   let loops = 0;
   let inLoop = false;
   for (let index = 1; index < calls.length; index += 1) {
     const [previous, current] = [calls[index - 1]!, calls[index]!];
-    const repeatedFailure = previous.outcome === "error" && current.outcome === "error" && previous.tool === current.tool;
+    const repeatedFailure =
+      isAgentFailure(previous) && isAgentFailure(current) && previous.tool === current.tool && previous.turn === current.turn;
     if (repeatedFailure && !inLoop) loops += 1;
     inLoop = repeatedFailure;
   }
@@ -284,7 +297,7 @@ export function renderSignals({ current, last, rows }: WeekComparison): string {
   if (olderRules > 0) {
     lines.push(
       `${plural(olderRules, "session")} tagged by older rules ${olderRules === 1 ? "is" : "are"} left out of text-tagged signals. ` +
-        "Run `ambessa ingest` to re-tag what's still on disk.",
+        "`ambessa ingest` re-tags them while their transcript is still on disk.",
     );
   }
   lines.push(`A trend needs ${MIN_SESSIONS} sessions in each week; up or down means a change of more than ${TREND_THRESHOLD * 100}%.`);

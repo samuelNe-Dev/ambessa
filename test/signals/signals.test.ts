@@ -246,7 +246,7 @@ describe("renderSignals", () => {
     expect(output).toMatch(/ {2}interruptions +per human turn +0 +0 +flat/);
     expect(output).toMatch(/ {2}read-before-write +per 100 write calls +– +– +too few sessions/);
     expect(output).toContain("1 session with no human turns is left out of per-human-turn signals.");
-    expect(output).toContain("1 session tagged by older rules is left out of text-tagged signals. Run `ambessa ingest` to re-tag what's still on disk.");
+    expect(output).toContain("1 session tagged by older rules is left out of text-tagged signals. `ambessa ingest` re-tags them while their transcript is still on disk.");
     expect(output).toContain("A trend needs 5 sessions in each week; up or down means a change of more than 20%.");
   });
 });

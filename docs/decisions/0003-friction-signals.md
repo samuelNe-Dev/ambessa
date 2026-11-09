@@ -21,17 +21,17 @@ Two constraints shape this:
 
 ## Decision
 
-1. **Text-based signals are tagged at ingest.** While reading a transcript, the adapter runs its text rules and stores only the resulting tag on the event (`tool_call.signals: ["read-before-write"]`). The text is never stored. The patterns belong to the adapter, because they match one harness's wording. The tags are harness-neutral ids.
+1. **Text-based signals are tagged at ingest.** While reading a transcript, the adapter runs its text rules and stores only the resulting tag on the event (`tool_call.signals: ["read-before-write"]`). The text is never stored. The patterns belong to the adapter, because they match one harness's wording. They are anchored to the start of the error, so text an error merely quotes isn't tagged. The tags are harness-neutral ids.
 
 2. **Every signal has a natural unit.**
 
    | Group | Signal | Counts | Per |
    |---|---|---|---|
-   | Tool friction | `tool-errors` | tool calls that failed | 100 tool calls |
+   | Tool friction | `tool-errors` | the agent's own failed calls: non-zero exits and other errors | 100 tool calls |
    | | `nonzero-exit` | shell commands that exited non-zero | 100 shell calls |
-   | | `retry-loops` | runs of the same tool failing two or more times in a row, counted once per run | 100 tool calls |
+   | | `retry-loops` | runs of the same tool failing (as in `tool-errors`) two or more times in a row within one turn, counted once per run | 100 tool calls |
    | | `blocked` | calls stopped by a permission rule or a hook | 100 tool calls |
-   | Conversation | `interruptions` | times the user stopped the agent | human turn |
+   | Conversation | `interruptions` | times the user stopped the agent, mid-reply or mid-tool | human turn |
    | | `rejected-calls` | tool calls the user said no to | human turn |
    | Cost and context | `tokens` | input and output tokens, subagents included | human turn |
    | | `compactions` | context compactions | human turn |
@@ -39,6 +39,8 @@ Two constraints shape this:
    | Text-tagged | `read-before-write` | writes to a file the agent hadn't read | 100 write calls |
    | | `stale-file` | edits to a file that changed since it was read | 100 write calls |
    | | `file-not-found` | reads of a file that doesn't exist | 100 read calls |
+
+   Each event lands in exactly one signal. A rejected call counts in `rejected-calls`, a permission or hook block in `blocked`, a stopped tool in `interruptions`, and none of them in `tool-errors`. Claude Code's "[Request interrupted by user for tool use]" message follows a call that already records it, so it isn't counted again. `file-not-found` covers reads only. An edit to a missing file is a failed write and counts in `tool-errors`.
 
    A subagent's activity counts toward its root session. Sessions with no human turns, such as scheduled or fully automated runs, are left out of the per-human-turn signals, which would otherwise divide by zero. The report says how many were left out.
 
