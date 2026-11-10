@@ -3,7 +3,8 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { CLAUDE_CODE_RULES_VERSION, normalizeClaudeCode } from "../adapters/claude-code.js";
-import type { NormalizedSession } from "../session/schema.js";
+import { SCHEMA_VERSION, type NormalizedSession } from "../session/schema.js";
+import { resolveProjectId } from "./projects.js";
 import {
   acquireLock,
   deleteSession,
@@ -61,7 +62,8 @@ export async function ingestClaudeCode(root: string, source: string): Promise<In
           known.size === transcriptStats.size &&
           known.mtimeMs === transcriptStats.mtimeMs &&
           known.metaMtimeMs === (metaStats?.mtimeMs ?? null) &&
-          known.rulesVersion === CLAUDE_CODE_RULES_VERSION
+          known.rulesVersion === CLAUDE_CODE_RULES_VERSION &&
+          known.schemaVersion === SCHEMA_VERSION
         ) {
           result.unchanged += 1;
           continue;
@@ -70,7 +72,9 @@ export async function ingestClaudeCode(root: string, source: string): Promise<In
         // Read the meta file before opening the transcript: a line reader that is left waiting on
         // another await can finish and close before anyone iterates it, and then hangs forever.
         const meta = metaStats === null ? undefined : JSON.parse(await readFile(metaFile, "utf8"));
-        const normalized = await normalizeClaudeCode({ file, lines: readLines(file), meta });
+        const { hints, ...normalized } = await normalizeClaudeCode({ file, lines: readLines(file), meta });
+        // The folder is used only to resolve the project; only its hash reaches the archive.
+        if (hints.cwd !== null) normalized.session.projectId = await resolveProjectId(hints.cwd, state.projects);
         await writeSession(root, normalized);
         if (known !== undefined && known.sessionId !== normalized.session.id) await dropIfUnused(root, state, known.sessionId, file);
         remember(state, file, transcriptStats, metaStats, normalized);
@@ -102,6 +106,7 @@ function remember(state: ArchiveState, file: string, transcript: Stats, meta: St
     harness: session.harness,
     sessionId: session.id,
     rulesVersion: session.rulesVersion,
+    schemaVersion: SCHEMA_VERSION,
   };
 
   for (const event of events) {

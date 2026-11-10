@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { archiveRoot, readAllSessions } from "./archive/archive.js";
+import { resolve } from "node:path";
+import { archiveRoot, loadState, readAllSessions } from "./archive/archive.js";
+import { resolveProjectId } from "./archive/projects.js";
 import { defaultClaudeCodeSource, ingestClaudeCode } from "./archive/ingest.js";
 import { CLAUDE_CODE_RULES_VERSION } from "./adapters/claude-code.js";
 import { renderSessions, summarize } from "./report/sessions.js";
@@ -23,6 +25,7 @@ Commands:
   sessions   List archived sessions, newest first, with subagents rolled up
                --limit <n>      How many to show (default: 20)
   signals    Friction signals for the last 7 days against the 7 before
+               --project <dir>  Only sessions from this project (worktrees included)
   help       Show this message
   version    Print the installed version
 
@@ -129,14 +132,19 @@ async function sessions(args: readonly string[], context: Context): Promise<numb
 }
 
 async function signals(args: readonly string[], context: Context): Promise<number> {
+  let project: string | undefined;
   try {
-    parseArgs({ args: [...args], options: {}, strict: true });
+    ({ project } = parseArgs({ args: [...args], options: { project: { type: "string" } }, strict: true }).values);
   } catch (error) {
     context.err(`${(error as Error).message}\n\n${USAGE}`);
     return 2;
   }
-  const { sessions: archived, unreadable } = await readAllSessions(archiveRoot(context.env, context.home), "claude-code");
-  context.out(renderSignals(compareWeeks(archived, context.now(), CLAUDE_CODE_RULES_VERSION)));
+  const root = archiveRoot(context.env, context.home);
+  const { sessions: archived, unreadable } = await readAllSessions(root, "claude-code");
+  // Resolve the folder the same way ingest did; the remembered mapping wins, so deleted worktrees still match.
+  const projectId = project === undefined ? null : await resolveProjectId(resolve(project), (await loadState(root)).projects);
+  const scoped = projectId === null ? archived : archived.filter(({ session }) => session.projectId === projectId);
+  context.out(renderSignals(compareWeeks(scoped, context.now(), CLAUDE_CODE_RULES_VERSION)));
   if (unreadable.length > 0) context.out(`${unreadable.length} archived session(s) couldn't be read and are left out.`);
   return 0;
 }

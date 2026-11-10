@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { CLAUDE_CODE_RULES_VERSION, normalizeClaudeCode } from "../../src/adapters/claude-code.js";
 import { hashId } from "../../src/session/ids.js";
-import type { ModelCallEvent, NormalizedSession, SessionEvent, ToolCallEvent } from "../../src/session/schema.js";
+import type { AdaptedSession, ModelCallEvent, SessionEvent, ToolCallEvent } from "../../src/session/schema.js";
 
 function fixture(name: string): string[] {
   const text = readFileSync(new URL(`../fixtures/claude-code/${name}`, import.meta.url), "utf8");
   return text.split("\n").filter((line) => line.length > 0);
 }
 
-function load(name: string, meta?: unknown): Promise<NormalizedSession> {
+function load(name: string, meta?: unknown): Promise<AdaptedSession> {
   return normalizeClaudeCode({ file: name, lines: fixture(name), meta });
 }
 
