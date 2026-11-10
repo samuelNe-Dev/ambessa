@@ -2,7 +2,7 @@
 
 **Ambessa is a self-improving software factory for coding agents: it builds your issues into proven PRs, measures every session, and keeps only the changes to itself that measurably help.**
 
-> **Status: v0.0.1.** Ambessa can read your Claude Code sessions into a private local archive and summarize them. The improvement loop comes next. This repo is built in public, one small step a day. Follow along in [`LOG.md`](LOG.md).
+> **Status: v0.0.2.** Ambessa reads your Claude Code sessions into a private local archive, summarizes them, and measures friction week over week. The improvement loop comes next. This repo is built in public, one small step a day. Follow along in [`LOG.md`](LOG.md).
 
 ## Why
 

@@ -1,6 +1,6 @@
 {
   "name": "ambessa",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A self-improving software factory for coding agents: builds issues into proven PRs, measures every session, and keeps only the changes to itself that measurably help.",
   "keywords": [
     "ai",
