@@ -353,7 +353,7 @@ describe("ambessa signals", () => {
 });
 
 describe("ingest: projects", () => {
-  it("gives every session a hashed project and remembers each folder's project", async () => {
+  it("gives every session a hashed project, subagents included", async () => {
     place("basic.jsonl", "p/sess-basic.jsonl");
     place("subagent.jsonl", "p/sess-parent/subagents/agent-abc.jsonl");
     await ingestClaudeCode(root, source);
@@ -364,7 +364,8 @@ describe("ingest: projects", () => {
     const child = await readSessionRecord(root, "claude-code", hashId("claude-code", "session", "sess-parent", "agent-abc"));
     expect(root1.projectId).toBe(project);
     expect(child.projectId).toBe(project);
-    expect(JSON.parse(readFileSync(join(root, "state.json"), "utf8")).projects).toEqual({ "/Users/alice/secret-project": project });
+    // A missing folder outside any repository isn't remembered: a later run may still find its repository.
+    expect(JSON.parse(readFileSync(join(root, "state.json"), "utf8")).projects).toEqual({});
   });
 
   it("leaves the project empty when no entry names a working folder", async () => {
@@ -391,5 +392,13 @@ describe("ambessa signals --project", () => {
     expect(one.code).toBe(0);
     expect(one.out.split("\n")[0]).toContain("This week: 2026-11-01 → 2026-11-08, 1 session");
     expect(one.out).toMatch(/ {2}tool-errors +per 100 tool calls +– +0 +too few sessions/);
+  });
+
+  it("says so when the archive has no sessions from that project", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+    const result = await invoke(["signals", "--project", "/never-seen"], { AMBESSA_HOME: root });
+    expect(result).toMatchObject({ code: 0 });
+    expect(result.out).toBe("No archived sessions belong to /never-seen. Run `ambessa ingest` after working there.");
   });
 });

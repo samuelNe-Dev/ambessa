@@ -54,4 +54,5 @@ Many fixes belong in one project's `AGENTS.md` or `CLAUDE.md`. But the archive d
 
 - **Easier:** every change to the agent setup carries the number it promised to move. A project's fixes are measured on that project's sessions, worktrees included.
 - **Harder:** applying stays manual, so a proposal that's applied but never stamped can't be graded. The skill has to remind the user. Sessions ingested before v0.0.3 whose transcripts are gone have no project, so they only count toward global proposals.
+- **Limits of project ids:** they are local. Moving or re-cloning a repository gives it a new id. A folder that was cached as "not a repository" keeps its folder id even after a later `git init`. A deleted folder resolves through its nearest existing parent, so if that parent is inside a repository, such as a home folder kept in git, it joins that repository. Only definite git answers are remembered; a failed lookup is retried on the next run.
 - **Signs this was wrong:** `propose` refusing often for lack of sessions (the 14-day window is too short for real use), or proposals left `proposed` because the skill's drafts aren't useful.

@@ -23,5 +23,5 @@ One entry per working day: what changed, what I learned, what's next. Newest fir
 
 - Released v0.0.2 and reordered the roadmap: the factory now comes right after the loop (v0.2), ahead of Codex. The README promises a factory first, so it shouldn't be the last thing built.
 - Settled v0.0.3 in [decision record 0004](docs/decisions/0004-proposals.md). A proposal is one setup change aimed at one signal, with a 14-day baseline. A skill drafts it, and I apply it.
-- First piece: project identity. Each session now knows its project as a hashed git repository, so the factory's worktrees count as one project. Over my archive that's 50 working folders in 37 projects.
+- First piece: project identity. Each session now knows its project as a hashed git repository, so the factory's worktrees count as one project. Over my archive, 454 sessions fall into 34 projects, including worktrees deleted before Ambessa first saw them.
 - The archive proved its point overnight: Claude Code deleted 11 transcripts since yesterday, and their sessions are still in the archive.

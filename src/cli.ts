@@ -144,6 +144,10 @@ async function signals(args: readonly string[], context: Context): Promise<numbe
   // Resolve the folder the same way ingest did; the remembered mapping wins, so deleted worktrees still match.
   const projectId = project === undefined ? null : await resolveProjectId(resolve(project), (await loadState(root)).projects);
   const scoped = projectId === null ? archived : archived.filter(({ session }) => session.projectId === projectId);
+  if (project !== undefined && scoped.length === 0) {
+    context.out(`No archived sessions belong to ${project}. Run \`ambessa ingest\` after working there.`);
+    return 0;
+  }
   context.out(renderSignals(compareWeeks(scoped, context.now(), CLAUDE_CODE_RULES_VERSION)));
   if (unreadable.length > 0) context.out(`${unreadable.length} archived session(s) couldn't be read and are left out.`);
   return 0;
