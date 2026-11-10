@@ -6,8 +6,11 @@
  * adapters redact while reading, so private content never reaches the archive.
  */
 
-/** 2 added tool-call signal tags and the session's rules version (decision record 0003). Version 1 records stay readable. */
-export const SCHEMA_VERSION = 2;
+/**
+ * 2 added tool-call signal tags and the session's rules version (decision record 0003).
+ * 3 added the hashed project (decision record 0004). Older records stay readable.
+ */
+export const SCHEMA_VERSION = 3;
 
 export type Harness = "claude-code" | "codex";
 
@@ -38,6 +41,8 @@ export interface SessionRecord {
   unparseableLines: number;
   /** Version of the adapter's text rules that tagged this session's events; 0 for records written before tagging existed. */
   rulesVersion: number;
+  /** Hashed git repository (worktrees included) or folder the session ran in; null when unknown. Set by ingest. */
+  projectId: string | null;
 }
 
 export type TurnOrigin = "human" | "automated";
@@ -142,4 +147,12 @@ export interface NormalizedSession {
   session: SessionRecord;
   /** In transcript order. */
   events: SessionEvent[];
+}
+
+/** What an adapter returns: the session, plus facts ingest needs but must never archive. */
+export interface AdaptedSession extends NormalizedSession {
+  hints: {
+    /** The working folder the session ran in, used only to resolve its project. */
+    cwd: string | null;
+  };
 }

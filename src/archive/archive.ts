@@ -25,6 +25,8 @@ export interface SourceState {
   sessionId: string;
   /** The text rules the session was tagged with; a different current version means re-tag. */
   rulesVersion?: number;
+  /** The session schema it was written with; a different current version means re-read. */
+  schemaVersion?: number;
 }
 
 /** The state file has its own version, separate from the session schema. */
@@ -37,6 +39,8 @@ export interface ArchiveState {
   spawners: Record<string, { sessionId: string; startedAt: string | null }>;
   /** Nested subagents still waiting for their parent. */
   unlinked: string[];
+  /** Each working folder's hashed project, remembered so it stays stable after the folder is gone. */
+  projects: Record<string, string>;
 }
 
 export function archiveRoot(env: Readonly<Record<string, string | undefined>>, home: string): string {
@@ -49,7 +53,7 @@ export async function loadState(root: string): Promise<ArchiveState> {
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: STATE_VERSION, sources: {}, spawners: {}, unlinked: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { schemaVersion: STATE_VERSION, sources: {}, spawners: {}, unlinked: [], projects: {} };
     throw error;
   }
   const rebuild = "Delete it to rebuild it on the next ingest; archived sessions are kept.";
@@ -60,6 +64,7 @@ export async function loadState(root: string): Promise<ArchiveState> {
     throw new Error(`${path} is unreadable. ${rebuild}`);
   }
   if (state.schemaVersion !== STATE_VERSION) throw new Error(`${path} has unsupported version ${state.schemaVersion}. ${rebuild}`);
+  state.projects ??= {}; // added in v0.0.3
   return state;
 }
 
@@ -168,16 +173,19 @@ export async function listSessionIds(root: string, harness: Harness): Promise<st
   }
 }
 
-/**
- * Brings an archived record up to the current schema. Version 1 predates signal tags
- * (decision record 0003): its sessions read as rules version 0 and its tool calls as untagged.
- */
 type ArchivedRecord = { schemaVersion: number; kind: string } & Record<string, unknown>;
 
+/**
+ * Brings an archived record up to the current schema.
+ * - Version 1 predates signal tags (decision record 0003): sessions read as rules version 0, tool calls as untagged.
+ * - Version 2 predates projects (decision record 0004): sessions read as having no project.
+ */
 function upgrade(record: ArchivedRecord, id: string): ArchivedRecord {
   if (record.schemaVersion === SCHEMA_VERSION) return record;
-  if (record.schemaVersion !== 1) throw new Error(`Unsupported schema version ${record.schemaVersion} in session ${id}`);
-  if (record.kind === "session") return { rulesVersion: 0, ...record, schemaVersion: SCHEMA_VERSION };
+  if (record.schemaVersion !== 1 && record.schemaVersion !== 2) {
+    throw new Error(`Unsupported schema version ${record.schemaVersion} in session ${id}`);
+  }
+  if (record.kind === "session") return { rulesVersion: 0, projectId: null, ...record, schemaVersion: SCHEMA_VERSION };
   if (record.kind === "tool_call") return { signals: [], ...record, schemaVersion: SCHEMA_VERSION };
   return { ...record, schemaVersion: SCHEMA_VERSION };
 }

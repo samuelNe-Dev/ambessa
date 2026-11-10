@@ -4,7 +4,7 @@ import type { ErrorKind, NormalizedSession, SessionEvent, SessionRecord, TextSig
 export function session(id: string, overrides: Partial<SessionRecord> = {}, events: SessionEvent[] = []): NormalizedSession {
   return {
     session: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       id,
       harness: "claude-code",
@@ -19,6 +19,7 @@ export function session(id: string, overrides: Partial<SessionRecord> = {}, even
       unknownEntryTypes: {},
       unparseableLines: 0,
       rulesVersion: 1,
+      projectId: null,
       ...overrides,
     },
     events,

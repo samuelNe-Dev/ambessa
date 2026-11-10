@@ -18,3 +18,10 @@ One entry per working day: what changed, what I learned, what's next. Newest fir
 - First real reading: `stale-file` is my biggest text-tagged friction at about 3 in every 100 edits, and tokens per human turn halved this week (9.2M to 4.3M). Real data also caught one more misleading number: a tiny but real rate printed as `0.00`. It now prints `<0.01`.
 - Writing the tests first caught two of my own mistakes before any code existed: exactly −20% is not a trend under a "more than 20%" rule, and a session with a human turn but no model calls still lowers the average tokens per turn.
 - **Next:** v0.0.3: proposals with recorded baselines.
+
+## 2026-11-10 · Day 2
+
+- Released v0.0.2 and reordered the roadmap: the factory now comes right after the loop (v0.2), ahead of Codex. The README promises a factory first, so it shouldn't be the last thing built.
+- Settled v0.0.3 in [decision record 0004](docs/decisions/0004-proposals.md). A proposal is one setup change aimed at one signal, with a 14-day baseline. A skill drafts it, and I apply it.
+- First piece: project identity. Each session now knows its project as a hashed git repository, so the factory's worktrees count as one project. Over my archive, 454 sessions fall into 34 projects, including worktrees deleted before Ambessa first saw them.
+- The archive proved its point overnight: Claude Code deleted 11 transcripts since yesterday, and their sessions are still in the archive.

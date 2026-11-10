@@ -3,8 +3,8 @@ import { hashId } from "../session/ids.js";
 import {
   SCHEMA_VERSION,
   type ErrorKind,
+  type AdaptedSession,
   type ModelCallEvent,
-  type NormalizedSession,
   type SessionEvent,
   type ToolCallEvent,
   type ToolCategory,
@@ -83,13 +83,14 @@ const MCP_TOOL_WITH_ID = /^mcp__([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}
 
 type Entry = Record<string, unknown>;
 
-export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<NormalizedSession> {
+export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<AdaptedSession> {
   const events: SessionEvent[] = [];
   const modelCalls = new Map<string, ModelCallEvent>();
   const toolCalls = new Map<string, ToolCallEvent>();
   const unknownEntryTypes: Record<string, number> = {};
   let unparseableLines = 0;
   let sessionId: string | null = null;
+  let cwd: string | null = null;
   let harnessVersion: string | null = null;
   let startedAt: string | null = null;
   let endedAt: string | null = null;
@@ -112,6 +113,7 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
     }
 
     sessionId ??= str(entry.sessionId);
+    cwd ??= str(entry.cwd);
     agentId ??= str(entry.agentId);
     const version = str(entry.version);
     if (version !== null && (harnessVersion === null || compareVersions(version, harnessVersion) > 0)) {
@@ -260,8 +262,10 @@ export async function normalizeClaudeCode(input: ClaudeCodeInput): Promise<Norma
       unknownEntryTypes,
       unparseableLines,
       rulesVersion: CLAUDE_CODE_RULES_VERSION,
+      projectId: null,
     },
     events,
+    hints: { cwd },
   };
 }
 
