@@ -5,7 +5,7 @@ import type { NormalizedSession, SessionEvent, SessionRecord, Usage } from "../.
 function session(id: string, overrides: Partial<SessionRecord> = {}, events: SessionEvent[] = []): NormalizedSession {
   return {
     session: {
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       id,
       harness: "claude-code",
@@ -20,6 +20,7 @@ function session(id: string, overrides: Partial<SessionRecord> = {}, events: Ses
       unknownEntryTypes: {},
       unparseableLines: 0,
       rulesVersion: 1,
+      projectId: null,
       ...overrides,
     },
     events,

@@ -64,7 +64,7 @@ describe("ingest", () => {
     await ingestClaudeCode(root, source);
     const [id] = await listSessionIds(root, "claude-code");
     const lines = readFileSync(join(root, "sessions/claude-code", `${id}.jsonl`), "utf8").trim().split("\n");
-    expect(lines.map((line) => JSON.parse(line).schemaVersion)).toEqual(lines.map(() => 2));
+    expect(lines.map((line) => JSON.parse(line).schemaVersion)).toEqual(lines.map(() => 3));
   });
 
   it("skips unchanged transcripts and re-reads ones that grew", async () => {
@@ -150,6 +150,14 @@ describe("ingest", () => {
 });
 
 describe("ingest: schema and rule upgrades", () => {
+  it("reads a version 2 session as having no project", async () => {
+    const directory = join(root, "sessions/claude-code");
+    mkdirSync(directory, { recursive: true });
+    const v2 = { schemaVersion: 2, kind: "session", id: "v2", harness: "claude-code", harnessVersion: null, parentId: null, depth: 0, orphan: false, spawnedByCallId: null, startedAt: null, endedAt: null, source: { file: "x" }, unknownEntryTypes: {}, unparseableLines: 0, rulesVersion: 2 };
+    writeFileSync(join(directory, "v2.jsonl"), JSON.stringify(v2) + "\n");
+    expect(await readSessionRecord(root, "claude-code", "v2")).toMatchObject({ schemaVersion: 3, projectId: null, rulesVersion: 2 });
+  });
+
   it("reads a version 1 session as having no tags and rules version 0", async () => {
     const directory = join(root, "sessions/claude-code");
     mkdirSync(directory, { recursive: true });
@@ -160,9 +168,20 @@ describe("ingest: schema and rule upgrades", () => {
     writeFileSync(join(directory, "old.jsonl"), v1.map((record) => JSON.stringify(record)).join("\n") + "\n");
 
     const { session, events } = await readSession(root, "claude-code", "old");
-    expect(session).toMatchObject({ schemaVersion: 2, rulesVersion: 0 });
+    expect(session).toMatchObject({ schemaVersion: 3, rulesVersion: 0, projectId: null });
     expect(events[0]).toMatchObject({ kind: "tool_call", signals: [] });
     expect(await readSessionRecord(root, "claude-code", "old")).toMatchObject({ rulesVersion: 0 });
+  });
+
+  it("re-reads unchanged transcripts when the archive schema changed", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    await ingestClaudeCode(root, source);
+    const statePath = join(root, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    for (const entry of Object.values(state.sources) as { schemaVersion?: number }[]) delete entry.schemaVersion;
+    writeFileSync(statePath, JSON.stringify(state));
+
+    expect(await ingestClaudeCode(root, source)).toMatchObject({ updated: 1, unchanged: 0 });
   });
 
   it("re-tags unchanged transcripts when the text rules changed", async () => {
@@ -330,5 +349,47 @@ describe("ambessa signals", () => {
     // errors.jsonl: 2 real failures among 10 calls; its rejection, interruption and blocks count elsewhere.
     expect(result.out).toMatch(/ {2}tool-errors +per 100 tool calls +– +20 +too few sessions/);
     expect(result.out).toMatch(/ {2}read-before-write +per 100 write calls +– +50 +too few sessions/);
+  });
+});
+
+describe("ingest: projects", () => {
+  it("gives every session a hashed project and remembers each folder's project", async () => {
+    place("basic.jsonl", "p/sess-basic.jsonl");
+    place("subagent.jsonl", "p/sess-parent/subagents/agent-abc.jsonl");
+    await ingestClaudeCode(root, source);
+
+    // The fixtures' folder doesn't exist here, so the project falls back to the folder itself.
+    const project = hashId("project", "/Users/alice/secret-project");
+    const root1 = await readSessionRecord(root, "claude-code", hashId("claude-code", "session", "sess-basic"));
+    const child = await readSessionRecord(root, "claude-code", hashId("claude-code", "session", "sess-parent", "agent-abc"));
+    expect(root1.projectId).toBe(project);
+    expect(child.projectId).toBe(project);
+    expect(JSON.parse(readFileSync(join(root, "state.json"), "utf8")).projects).toEqual({ "/Users/alice/secret-project": project });
+  });
+
+  it("leaves the project empty when no entry names a working folder", async () => {
+    write("p/x.jsonl", [{ type: "user", sessionId: "x", message: { role: "user", content: "hi" } }]);
+    await ingestClaudeCode(root, source);
+    expect(await readSessionRecord(root, "claude-code", hashId("claude-code", "session", "x"))).toMatchObject({ projectId: null });
+  });
+});
+
+describe("ambessa signals --project", () => {
+  it("only counts sessions from that project", async () => {
+    place("errors.jsonl", "p/sess-errors.jsonl");
+    write("p/other.jsonl", [
+      { type: "user", sessionId: "other", cwd: "/elsewhere", timestamp: "2026-11-02T10:00:00.000Z", message: { role: "user", content: "hi" } },
+      { type: "assistant", sessionId: "other", cwd: "/elsewhere", timestamp: "2026-11-02T10:00:01.000Z", message: { id: "m", model: "m", content: [{ type: "tool_use", id: "t", name: "Bash", input: {} }] } },
+      { type: "user", sessionId: "other", cwd: "/elsewhere", timestamp: "2026-11-02T10:00:02.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "ok", is_error: false }] } },
+    ]);
+    await invoke(["ingest", "--source", source], { AMBESSA_HOME: root });
+
+    const now = new Date("2026-11-08T00:00:00Z");
+    const all = await invoke(["signals"], { AMBESSA_HOME: root }, "/nonexistent-home", now);
+    const one = await invoke(["signals", "--project", "/elsewhere"], { AMBESSA_HOME: root }, "/nonexistent-home", now);
+    expect(all.out.split("\n")[0]).toContain("2 sessions");
+    expect(one.code).toBe(0);
+    expect(one.out.split("\n")[0]).toContain("This week: 2026-11-01 → 2026-11-08, 1 session");
+    expect(one.out).toMatch(/ {2}tool-errors +per 100 tool calls +– +0 +too few sessions/);
   });
 });

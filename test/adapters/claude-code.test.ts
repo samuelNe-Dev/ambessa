@@ -20,7 +20,7 @@ describe("Claude Code adapter: a basic session", () => {
   it("describes the session without storing raw ids", async () => {
     const { session } = await load("basic.jsonl");
     expect(session).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: "session",
       id: hashId("claude-code", "session", "sess-basic"),
       harness: "claude-code",
@@ -35,6 +35,8 @@ describe("Claude Code adapter: a basic session", () => {
       unknownEntryTypes: { "some-future-type": 2 },
       unparseableLines: 1,
       rulesVersion: CLAUDE_CODE_RULES_VERSION,
+      // Ingest resolves the project; the adapter never knows it.
+      projectId: null,
     });
   });
 
@@ -230,8 +232,14 @@ describe("Claude Code adapter: subagents", () => {
 });
 
 describe("Claude Code adapter: privacy", () => {
+  it("hands ingest the working folder separately, outside what gets archived", async () => {
+    const result = await load("basic.jsonl");
+    expect(result.hints).toEqual({ cwd: "/Users/alice/secret-project" });
+  });
+
   it.each(["basic.jsonl", "errors.jsonl", "subagent.jsonl"])("keeps no private content from %s", async (name) => {
-    const output = JSON.stringify(await load(name));
+    const { session, events } = await load(name);
+    const output = JSON.stringify({ session, events });
     for (const secret of ["SECRET", "/Users/alice", "secret-project", "secret-branch", "sess-", "toolu_", "agent-abc", "msg_"]) {
       expect(output).not.toContain(secret);
     }
